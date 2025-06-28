@@ -108,12 +108,6 @@ window.analiseOcupacaoScript = {
         const areaResultados = document.getElementById('painel-area-resultados');
 
         try {
-            if (!document.getElementById(this.ELEMENTO_CHAVE_ID)) {
-                alert("ERRO: Este script só funciona na página do Dashboard.\n\nVocê será redirecionado. Após carregar, clique no botão de análise novamente.");
-                window.location.href = this.URL_PAGINA_DASHBOARD;
-                return;
-            }
-            
             btnAnalisar.disabled = true;
             btnDownload.disabled = true;
             areaResultados.innerHTML = `<div class="loading-spinner"></div><p style="text-align:center;">Analisando dados... Isso pode levar um momento.</p>`;
@@ -175,7 +169,7 @@ window.analiseOcupacaoScript = {
     },
 
     // -----------------------------------------------------------------
-    // 5. FUNÇÃO DE SETUP INICIAL (Cria os botões e o painel)
+    // 5. FUNÇÃO DE SETUP INICIAL (PONTO DE ENTRADA DO SCRIPT)
     // -----------------------------------------------------------------
     uninstall() {
         document.getElementById('analise-ocupacao-btn-container')?.remove();
@@ -186,6 +180,14 @@ window.analiseOcupacaoScript = {
     },
 
     setup() {
+        // CORREÇÃO: Validação ocorre ANTES de criar qualquer elemento na tela.
+        if (!document.getElementById(this.ELEMENTO_CHAVE_ID)) {
+            // CORREÇÃO: Mensagem de alerta atualizada.
+            alert("Você não está na página inicial de Dashboards. Estamos te levando para lá agora!\n\nAssim que a nova página carregar, por favor, clique no seu favorito 'Analise de Ocupacao' mais uma vez para ativar a ferramenta.");
+            window.location.href = this.URL_PAGINA_DASHBOARD;
+            return; // Impede a continuação do setup
+        }
+
         const estilos = `
             /* Botões Flutuantes */
             #analise-ocupacao-btn-container { position: fixed; bottom: 20px; right: 20px; z-index: 9997; }
@@ -199,7 +201,7 @@ window.analiseOcupacaoScript = {
             /* Painel de Análise */
             #analise-ocupacao-painel { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 750px; max-width: 95vw; max-height: 90vh; background: #fff; border-radius: 8px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); z-index: 10000; flex-direction: column; }
             #analise-ocupacao-painel .painel-header { padding: 15px 25px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-            #analise-ocupacao-painel .painel-header button.fechar-interno { background: transparent; border: none; font-size: 24px; font-weight: bold; cursor: pointer; color: #888; padding: 0 5px; }
+            #analise-ocupacao-painel .painel-header button.fechar-interno { background: transparent; border: none; font-size: 24px; font-weight: bold; cursor: pointer; color: #888; padding: 0 5px; line-height: 1; }
             #analise-ocupacao-painel .painel-header button.fechar-interno:hover { color: #000; }
             #analise-ocupacao-painel .painel-body { padding: 25px; overflow-y: auto; }
             #analise-ocupacao-painel .painel-footer { padding: 15px 25px; border-top: 1px solid #eee; text-align: right; }
@@ -256,16 +258,15 @@ window.analiseOcupacaoScript = {
         const containerBotoes = document.createElement('div');
         containerBotoes.id = 'analise-ocupacao-btn-container';
         containerBotoes.innerHTML = `
-            <button id="analise-ocupacao-btn-fechar" class="analise-btn-flutuante" title="Remover Ferramenta de Análise">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
-            </button>
             <button id="analise-ocupacao-btn" class="analise-btn-flutuante" title="Abrir/Fechar Painel de Análise">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg>
+            </button>
+            <button id="analise-ocupacao-btn-fechar" class="analise-btn-flutuante" title="Remover Ferramenta de Análise">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
             </button>
         `;
         document.body.appendChild(containerBotoes);
         
-        // CORREÇÃO DO BUG: Usar .bind(this) para garantir o contexto correto do 'this' nos eventos
         document.getElementById('analise-ocupacao-btn').onclick = this.togglePainel.bind(this);
         document.getElementById('analise-ocupacao-btn-fechar').onclick = this.uninstall.bind(this);
         document.getElementById('painel-btn-analisar').onclick = this.iniciarAnalise.bind(this);
