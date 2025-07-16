@@ -1,247 +1,299 @@
 // Envolve todo o script para evitar conflitos e checa se já foi carregado
 if (window.analiseOcupacaoScript) {
-    // Se o script já existe, remove a versão antiga para carregar a nova e corrigida
     window.analiseOcupacaoScript.uninstall();
     console.log("Versão anterior do script removida. Carregando nova versão...");
 }
 
-// Namespace para nosso script, para manter o ambiente global limpo
+// Namespace para nosso script
 window.analiseOcupacaoScript = {
-
     // -----------------------------------------------------------------
     // 1. CONFIGURAÇÕES E ESTADO
     // -----------------------------------------------------------------
     URL_PAGINA_DASHBOARD: 'https://clube04.com.br/digital/inicio.php',
     ELEMENTO_CHAVE_ID: 'buttonbuscarDashboards',
     URL_DASHBOARD_OCUPACAO: 'https://clube04.com.br/digital/Dashboard/DashboardN010.php',
+    URL_DASHBOARD_SERVICOS: 'https://clube04.com.br/digital/Dashboard/DashboardN008.php',
+    URL_DASHBOARD_FATURAMENTO: 'https://clube04.com.br/digital/Dashboard/DashboardN003.php', // ATENÇÃO: Verifique esta URL
+
     DIAS_DA_SEMANA: ["Domingo", "Segunda-Feira", "Terça-Feira", "Quarta-Feira", "Quinta-Feira", "Sexta-Feira", "Sábado"],
-    ultimoResultado: null, 
+    MESES: ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
+    ultimoResultado: null,
 
     // -----------------------------------------------------------------
-    // 2. FUNÇÕES AUXILIARES E DE LÓGICA
+    // 2. FUNÇÕES DE EXTRAÇÃO E LÓGICA
     // -----------------------------------------------------------------
     formatarData(d) {
         if (!(d instanceof Date) || isNaN(d)) return '';
-        return `${d.getFullYear()}-${('0'+(d.getMonth()+1)).slice(-2)}-${('0'+d.getDate()).slice(-2)}`;
+        return `${d.getFullYear()}-${('0' + (d.getMonth() + 1)).slice(-2)}-${('0' + d.getDate()).slice(-2)}`;
     },
-
     extrairTaxaDeHtml(h) {
-        try {
-            const s = h.match(/<script[^>]*>([\s\S]*?)<\/script>/); if (!s || !s[1]) return null;
-            const r = /label: "Geral.*?data: \[([\d\.]+)/; const m = s[1].match(r);
-            return (m && m[1]) ? parseFloat(m[1]) : null;
-        } catch (e) { return null; }
+        try { const s = h.match(/<script[^>]*>([\s\S]*?)<\/script>/); if (!s || !s[1]) return null; const r = /label: "Geral.*?data: \[([\d\.]+)/; const m = s[1].match(r); return (m && m[1]) ? parseFloat(m[1]) : null; } catch (e) { return null; }
     },
-
+    extrairServicosDeHtml(h) {
+        try { const s = h.match(/<script[^>]*>([\s\S]*?)<\/script>/); if (!s || !s[1]) return 0; const r = /data: \[([\d.]+)\]/g; let t = 0; let m; while ((m = r.exec(s[1])) !== null) { t += parseFloat(m[1]) || 0; } return t; } catch (e) { return 0; }
+    },
+    extrairFaturamentoDeHtml(h) {
+        try { const s = h.match(/<script[^>]*>([\s\S]*?)<\/script>/); if (!s || !s[1]) return 0; const r = /data: \[([\d.,\s]+)\]/g; const m = s[1].match(r); if (!m) return 0; let f = 0; m.forEach(ds => { const nums = ds.replace(/data: \[|\]/g, '').split(','); nums.forEach(n => f += parseFloat(n.trim()) || 0); }); return f; } catch (e) { return 0; }
+    },
     gerarDownload() {
-        if (!this.ultimoResultado) {
-            alert("Nenhum dado para baixar. Por favor, realize uma análise primeiro.");
-            return;
-        }
-        console.log("Gerando relatório CSV com separador ponto e vírgula (;)...");
-        const { dadosDiarios, resumoSemanal, mediaGeral, dataInicio, dataFim } = this.ultimoResultado;
+        if (!this.ultimoResultado) return alert("Nenhum dado para baixar.");
+        const { dadosDiarios, resumoSemanal, resumoMensal, ...totais } = this.ultimoResultado;
         
-        let csvContent = "Relatorio Detalhado por Dia\nData;DiaDaSemana;TaxaOcupacao\n";
-        dadosDiarios.forEach(d => { csvContent += `${d.data};${d.diaSemana};${d.taxa.toFixed(2).replace('.',',')}\n`; });
-        csvContent += "\n\nResumo por Dia da Semana\nDiaDaSemana;MediaOcupacao\n";
-        resumoSemanal.forEach(r => { csvContent += `${r.dia};${r.media.toFixed(2).replace('.',',')}\n`; });
-        csvContent += "\n\nMedia Geral do Periodo\nMediaGeral(Segunda a Sabado)\n" + `${mediaGeral.toFixed(2).replace('.',',')}\n`;
+        let csv = "Relatorio Detalhado por Dia\nData;DiaDaSemana;TaxaOcupacao;Servicos;Faturamento\n";
+        dadosDiarios.forEach(d => { csv += `${d.data};${d.diaSemana};${d.taxa.toFixed(2).replace('.', ',')};${d.servicos};${d.faturamento.toFixed(2).replace('.', ',')}\n`; });
         
-        const nomeArquivo = `relatorio_ocupacao_${this.formatarData(dataInicio)}_a_${this.formatarData(dataFim)}.csv`;
+        csv += "\n\nResumo por Mes\nMes;MediaOcupacao;TotalServicos;TotalFaturamento\n";
+        resumoMensal.forEach(m => { csv += `${m.mes};${m.mediaOcupacao.toFixed(2).replace('.', ',')}%;${m.totalServicos};R$ ${m.totalFaturamento.toFixed(2).replace('.', ',')}\n`; });
+
+        csv += "\n\nResumo por Dia da Semana\nDiaDaSemana;MediaOcupacao;MediaServicos;MediaFaturamento\n";
+        resumoSemanal.forEach(r => { csv += `${r.dia};${r.mediaOcupacao.toFixed(2).replace('.', ',')}%;${r.mediaServicos.toFixed(2).replace('.', ',')};R$ ${r.mediaFaturamento.toFixed(2).replace('.', ',')}\n`; });
         
-        const b = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        csv += `\n\nResumo Geral do Periodo\nMetrica;Valor\n`;
+        csv += `MediaGeralOcupacao(Seg-Sab);${totais.mediaGeralOcupacao.toFixed(2).replace('.', ',')}%\n`;
+        csv += `MediaDiariaServicos(Seg-Sab);${totais.mediaDiariaServicos.toFixed(2).replace('.', ',')}\n`;
+        csv += `MediaDiariaFaturamento(Seg-Sab);R$ ${totais.mediaDiariaFaturamento.toFixed(2).replace('.', ',')}\n`;
+        csv += `TotalServicosPeriodo;${totais.totalServicos}\n`;
+        csv += `TotalFaturamentoPeriodo;R$ ${totais.totalFaturamento.toFixed(2).replace('.', ',')}\n`;
+
+        const nomeArquivo = `relatorio_completo_${this.formatarData(totais.dataInicio)}_a_${this.formatarData(totais.dataFim)}.csv`;
+        const b = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
         const l = document.createElement("a"); const u = URL.createObjectURL(b);
         l.setAttribute("href", u); l.setAttribute("download", nomeArquivo);
         document.body.appendChild(l); l.click(); document.body.removeChild(l);
-        console.log(`✅ Relatório '${nomeArquivo}' baixado com sucesso!`);
     },
 
     // -----------------------------------------------------------------
-    // 3. FUNÇÕES DE CRIAÇÃO E CONTROLE DA UI
+    // 3. FUNÇÕES DE UI
     // -----------------------------------------------------------------
     togglePainel() {
-        const painel = document.getElementById('analise-ocupacao-painel');
-        if (painel) {
-            const isVisible = painel.style.display === 'flex';
-            painel.style.display = isVisible ? 'none' : 'flex';
-        }
+        const p = document.getElementById('analise-ocupacao-painel');
+        if(p) p.style.display = p.style.display === 'flex' ? 'none' : 'flex';
     },
-    
-    renderizarResultados(resultado) {
-        const { resumoSemanal, mediaGeral, dataInicio, dataFim, totalDias } = resultado;
-        const areaResultados = document.getElementById('painel-area-resultados');
-        const btnDownload = document.getElementById('painel-btn-baixar');
 
-        if (!areaResultados) return;
+    renderizarResultados(r) {
+        const area = document.getElementById('painel-area-resultados');
+        if (!area) return;
 
-        let barrasVerticaisHtml = '';
-        resumoSemanal.filter(d => d.dia !== "Domingo").forEach(dia => {
-            barrasVerticaisHtml += `
-                <div class="resumo-vertical-grupo">
-                    <div class="resumo-vertical-valor">${dia.media.toFixed(1).replace('.',',')}%</div>
-                    <div class="resumo-vertical-barra-fundo">
-                        <div class="resumo-vertical-barra-preenchimento" style="height: ${dia.media}%;" title="${dia.dia}: Média de ${dia.media.toFixed(1)}%"></div>
+        // Tabela Mensal
+        let tabelaMensalHtml = `<table class="resumo-tabela"><thead><tr><th>Mês</th><th>Média Ocupação</th><th>Total Serviços</th><th>Total Faturamento</th></tr></thead><tbody>`;
+        r.resumoMensal.forEach(m => {
+            tabelaMensalHtml += `<tr><td>${m.mes}</td><td>${m.mediaOcupacao.toFixed(1).replace('.',',')}%</td><td>${m.totalServicos}</td><td>R$ ${m.totalFaturamento.toFixed(2).replace('.',',')}</td></tr>`;
+        });
+        tabelaMensalHtml += `</tbody></table>`;
+        
+        // Tabela Semanal
+        let tabelaSemanalHtml = `<table class="resumo-tabela"><thead><tr><th>Métrica</th>`;
+        r.resumoSemanal.filter(d=>d.dia !== 'Domingo').forEach(d => { tabelaSemanalHtml += `<th>${d.dia.replace('-Feira','')}</th>`; });
+        tabelaSemanalHtml += `</tr></thead><tbody>
+            <tr><td>Média Ocupação</td>${r.resumoSemanal.filter(d=>d.dia !== 'Domingo').map(d => `<td>${d.mediaOcupacao.toFixed(1).replace('.',',')}%</td>`).join('')}</tr>
+            <tr><td>Média Serviços</td>${r.resumoSemanal.filter(d=>d.dia !== 'Domingo').map(d => `<td>${d.mediaServicos.toFixed(1).replace('.',',')}</td>`).join('')}</tr>
+            <tr><td>Média Faturamento</td>${r.resumoSemanal.filter(d=>d.dia !== 'Domingo').map(d => `<td>R$ ${d.mediaFaturamento.toFixed(1).replace('.',',')}</td>`).join('')}</tr>
+        </tbody></table>`;
+        
+        // Gráfico Semanal
+        let graficoHtml = '';
+        const maxOcupacao = Math.max(...r.resumoSemanal.map(d => d.mediaOcupacao)) || 100;
+        const maxServicos = Math.max(...r.resumoSemanal.map(d => d.mediaServicos)) || 1;
+        const maxFat = Math.max(...r.resumoSemanal.map(d => d.mediaFaturamento)) || 1;
+        r.resumoSemanal.forEach(dia => {
+            graficoHtml += `
+                <div class="resumo-grafico-grupo">
+                    <div class="resumo-grafico-barras">
+                        <div class="bar ocup" style="height: ${(dia.mediaOcupacao / maxOcupacao) * 100}%;" title="Ocupação: ${dia.mediaOcupacao.toFixed(1)}%"></div>
+                        <div class="bar serv" style="height: ${(dia.mediaServicos / maxServicos) * 100}%;" title="Serviços: ${dia.mediaServicos.toFixed(1)}"></div>
+                        <div class="bar fat" style="height: ${(dia.mediaFaturamento / maxFat) * 100}%;" title="Faturamento: R$ ${dia.mediaFaturamento.toFixed(1)}"></div>
                     </div>
-                    <div class="resumo-vertical-rotulo">${dia.dia.replace('-Feira', '')}</div>
+                    <div class="resumo-grafico-rotulo">${dia.dia.replace('-Feira','')}</div>
                 </div>
             `;
         });
 
-        const conteudoResultados = `
+        area.innerHTML = `
             <div class="resumo-info">
-                <p><strong>Período Analisado:</strong> ${this.formatarData(dataInicio)} a ${this.formatarData(dataFim)} (${totalDias} dias)</p>
-                <p><strong>Média Geral (Seg-Sáb):</strong> ${mediaGeral.toFixed(2).replace('.',',')}%</p>
+                <h3>Resumo do Período (${r.totalDias} dias)</h3>
+                <p><strong>Período:</strong> ${this.formatarData(r.dataInicio)} a ${this.formatarData(r.dataFim)}</p>
             </div>
-            <div class="resumo-vertical-container">${barrasVerticaisHtml}</div>
+            <h4>Desempenho Mensal</h4>
+            ${tabelaMensalHtml}
+            <h4>Médias por Dia da Semana</h4>
+            ${tabelaSemanalHtml}
+            <div class="grafico-wrapper">
+                <h4>Visualização Comparativa das Médias Semanais</h4>
+                <div class="grafico-legenda">
+                    <span class="legenda-item"><span class="cor ocup"></span>Ocupação</span>
+                    <span class="legenda-item"><span class="cor serv"></span>Serviços</span>
+                    <span class="legenda-item"><span class="cor fat"></span>Faturamento</span>
+                </div>
+                <div class="resumo-grafico-container">${graficoHtml}</div>
+            </div>
         `;
-        
-        areaResultados.innerHTML = conteudoResultados;
-        btnDownload.disabled = false;
+        document.getElementById('painel-btn-baixar').disabled = false;
     },
 
     // -----------------------------------------------------------------
     // 4. FUNÇÃO DE EXECUÇÃO PRINCIPAL
     // -----------------------------------------------------------------
     async iniciarAnalise() {
-        const btnAnalisar = document.getElementById('painel-btn-analisar');
-        const btnDownload = document.getElementById('painel-btn-baixar');
-        const areaResultados = document.getElementById('painel-area-resultados');
-
+        const btnAnalisar = document.getElementById('painel-btn-analisar'), areaResultados = document.getElementById('painel-area-resultados');
         try {
             btnAnalisar.disabled = true;
-            btnDownload.disabled = true;
+            document.getElementById('painel-btn-baixar').disabled = true;
             areaResultados.innerHTML = `<div class="loading-spinner"></div><p style="text-align:center;">Analisando dados... Isso pode levar um momento.</p>`;
             
-            console.clear();
-            console.log("======================================================\n🚀 INICIANDO ANÁLISE DE OCUPAÇÃO 🚀\n======================================================");
-
-            const dataInicioStr = document.getElementById('painel-data-inicio').value;
-            const dataFimStr = document.getElementById('painel-data-fim').value;
-
-            const dataInicio = new Date(dataInicioStr + 'T00:00:00');
-            const dataFim = new Date(dataFimStr + 'T00:00:00');
-            const totalDias = Math.round((dataFim - dataInicio) / (1000 * 60 * 60 * 24)) + 1;
-            console.log(`Período selecionado: de ${this.formatarData(dataInicio)} a ${this.formatarData(dataFim)} (${totalDias} dias)`);
+            const dataInicio = new Date(document.getElementById('painel-data-inicio').value + 'T00:00:00');
+            const dataFim = new Date(document.getElementById('painel-data-fim').value + 'T00:00:00');
+            const totalDias = Math.round((dataFim - dataInicio) / 864e5) + 1;
+            console.log(`Período: ${this.formatarData(dataInicio)} a ${this.formatarData(dataFim)} (${totalDias} dias)`);
 
             const dadosDiarios = [];
             const idUnidade = $('#idUnidade').val();
             
             for (let i = 0; i < totalDias; i++) {
                 const dataAtual = new Date(dataInicio); dataAtual.setDate(dataInicio.getDate() + i);
-                const dataAtualFormatada = this.formatarData(dataAtual);
-                const diaDaSemanaIndex = dataAtual.getDay();
+                const dataFmt = this.formatarData(dataAtual), diaIdx = dataAtual.getDay();
                 
-                console.log(`%cProcessando dia ${i + 1}/${totalDias}: ${dataAtualFormatada}`, 'font-weight: bold;');
-                if (diaDaSemanaIndex === 0) {
-                    console.log("   🔵 Domingo. Taxa = 0.");
-                    dadosDiarios.push({ data: dataAtualFormatada, diaSemana: this.DIAS_DA_SEMANA[diaDaSemanaIndex], taxa: 0 }); continue;
+                console.log(`%cProcessando dia ${i + 1}/${totalDias}: ${dataFmt}`, 'font-weight: bold;');
+                if (diaIdx === 0) {
+                    dadosDiarios.push({ data: dataFmt, diaSemana: this.DIAS_DA_SEMANA[diaIdx], taxa: 0, servicos: 0, faturamento: 0 }); continue;
                 }
-                const formData = new FormData(); formData.append('dataInicioBusca', dataAtualFormatada); formData.append('dataFimBusca', dataAtualFormatada); formData.append('idUnidade', idUnidade);
-                const response = await fetch(this.URL_DASHBOARD_OCUPACAO, { method: 'POST', body: formData });
+                const formData = new FormData(); formData.append('dataInicioBusca', dataFmt); formData.append('dataFimBusca', dataFmt); formData.append('idUnidade', idUnidade);
                 
-                const taxaDoDia = response.ok ? this.extrairTaxaDeHtml(await response.text()) : null;
-                dadosDiarios.push({ data: dataAtualFormatada, diaSemana: this.DIAS_DA_SEMANA[diaDaSemanaIndex], taxa: taxaDoDia ?? 0 });
+                const [respOcupacao, respServicos, respFaturamento] = await Promise.all([
+                    fetch(this.URL_DASHBOARD_OCUPACAO, { method: 'POST', body: formData }),
+                    fetch(this.URL_DASHBOARD_SERVICOS, { method: 'POST', body: formData }),
+                    fetch(this.URL_DASHBOARD_FATURAMENTO, { method: 'POST', body: formData })
+                ]);
                 
-                if(taxaDoDia === null) console.error(`   ❌ Falha na busca. Status: ${response.status}`);
-                else console.log(`   ✅ Taxa: ${taxaDoDia.toFixed(2)}%`);
+                const taxa = respOcupacao.ok ? this.extrairTaxaDeHtml(await respOcupacao.text()) : null;
+                const servicos = respServicos.ok ? this.extrairServicosDeHtml(await respServicos.text()) : 0;
+                const faturamento = respFaturamento.ok ? this.extrairFaturamentoDeHtml(await respFaturamento.text()) : 0;
+                
+                dadosDiarios.push({ data: dataFmt, diaSemana: this.DIAS_DA_SEMANA[diaIdx], taxa: taxa ?? 0, servicos, faturamento });
+                console.log(`   ✅ Ocupação: ${taxa?.toFixed(1) ?? 'N/A'}% | Serviços: ${servicos} | Faturamento: R$ ${faturamento.toFixed(2)}`);
             }
 
-            console.log("------------------------------------------------------\n📊 Calculando resumo...");
+            console.log("📊 Calculando resumos...");
+            const diasUteis = dadosDiarios.filter(d => d.diaSemana !== "Domingo");
+            // Cálculos gerais
+            const mediaGeralOcupacao = diasUteis.length > 0 ? diasUteis.map(d => d.taxa).reduce((a, b) => a + b, 0) / diasUteis.length : 0;
+            const totalServicos = dadosDiarios.reduce((a, b) => a + b.servicos, 0);
+            const mediaDiariaServicos = diasUteis.length > 0 ? totalServicos / diasUteis.length : 0;
+            const totalFaturamento = dadosDiarios.reduce((a, b) => a + b.faturamento, 0);
+            const mediaDiariaFaturamento = diasUteis.length > 0 ? totalFaturamento / diasUteis.length : 0;
             
-            const diasCalculaveis = dadosDiarios.filter(d => d.diaSemana !== "Domingo");
-            const mediaGeral = diasCalculaveis.length > 0 ? diasCalculaveis.map(d => d.taxa).reduce((a, b) => a + b, 0) / diasCalculaveis.length : 0;
-            
-            const resumoSemanal = this.DIAS_DA_SEMANA.map((nome) => {
-                if (nome === "Domingo") return { dia: nome, media: 0 };
-                const taxasDoDia = dadosDiarios.filter(d => d.diaSemana === nome).map(d => d.taxa);
-                return { dia: nome, media: (taxasDoDia.length > 0 ? taxasDoDia.reduce((a, b) => a + b, 0) / taxasDoDia.length : 0) };
+            // Resumo semanal
+            const resumoSemanal = this.DIAS_DA_SEMANA.map(nome => {
+                if (nome === "Domingo") return { dia: nome, mediaOcupacao: 0, mediaServicos: 0, mediaFaturamento: 0 };
+                const dias = diasUteis.filter(d => d.diaSemana === nome);
+                const mediaOcupacao = dias.length > 0 ? dias.map(d => d.taxa).reduce((a, b) => a + b, 0) / dias.length : 0;
+                const mediaServicos = dias.length > 0 ? dias.map(d => d.servicos).reduce((a, b) => a + b, 0) / dias.length : 0;
+                const mediaFaturamento = dias.length > 0 ? dias.map(d => d.faturamento).reduce((a, b) => a + b, 0) / dias.length : 0;
+                return { dia: nome, mediaOcupacao, mediaServicos, mediaFaturamento };
             });
 
-            this.ultimoResultado = { dadosDiarios, resumoSemanal, mediaGeral, dataInicio, dataFim, totalDias };
+            // Resumo mensal
+            const resumoMensalObj = {};
+            dadosDiarios.forEach(d => {
+                const mesAno = d.data.substring(0, 7); // "2025-04"
+                if (!resumoMensalObj[mesAno]) resumoMensalObj[mesAno] = { taxas: [], servicos: 0, faturamento: 0 };
+                resumoMensalObj[mesAno].servicos += d.servicos;
+                resumoMensalObj[mesAno].faturamento += d.faturamento;
+                if (d.diaSemana !== 'Domingo') {
+                    resumoMensalObj[mesAno].taxas.push(d.taxa);
+                }
+            });
+            const resumoMensal = Object.keys(resumoMensalObj).map(key => {
+                const mes = resumoMensalObj[key];
+                const [ano, mesNum] = key.split('-');
+                return {
+                    mes: `${this.MESES[parseInt(mesNum)-1]}/${ano}`,
+                    mediaOcupacao: mes.taxas.length > 0 ? mes.taxas.reduce((a,b) => a+b,0) / mes.taxas.length : 0,
+                    totalServicos: mes.servicos,
+                    totalFaturamento: mes.faturamento
+                }
+            });
+
+            this.ultimoResultado = { dadosDiarios, resumoSemanal, resumoMensal, mediaGeralOcupacao, mediaDiariaServicos, totalServicos, mediaDiariaFaturamento, totalFaturamento, dataInicio, dataFim, totalDias };
             this.renderizarResultados(this.ultimoResultado);
             
         } catch (error) {
-            console.error("🚫 Ocorreu um erro: 🚫", error);
-            areaResultados.innerHTML = `<p style="text-align:center; color: red;">Ocorreu um erro. Verifique o console (F12) para detalhes.</p>`;
+            console.error("🚫 Ocorreu um erro:", error);
         } finally {
             btnAnalisar.disabled = false;
         }
     },
 
     // -----------------------------------------------------------------
-    // 5. FUNÇÃO DE SETUP INICIAL (PONTO DE ENTRADA DO SCRIPT)
+    // 5. FUNÇÃO DE SETUP INICIAL
     // -----------------------------------------------------------------
     uninstall() {
         document.getElementById('analise-ocupacao-btn-container')?.remove();
         document.getElementById('analise-ocupacao-painel')?.remove();
         document.getElementById('analise-ocupacao-styles')?.remove();
         delete window.analiseOcupacaoScript;
-        console.log("Ferramenta de análise removida da página.");
     },
 
     setup() {
-        // CORREÇÃO: Validação ocorre ANTES de criar qualquer elemento na tela.
         if (!document.getElementById(this.ELEMENTO_CHAVE_ID)) {
-            // CORREÇÃO: Mensagem de alerta atualizada.
             alert("Você não está na página inicial de Dashboards. Estamos te levando para lá agora!\n\nAssim que a nova página carregar, por favor, clique no seu favorito 'Analise de Ocupacao' mais uma vez para ativar a ferramenta.");
             window.location.href = this.URL_PAGINA_DASHBOARD;
-            return; // Impede a continuação do setup
+            return;
         }
 
         const estilos = `
-            /* Botões Flutuantes */
             #analise-ocupacao-btn-container { position: fixed; bottom: 20px; right: 20px; z-index: 9997; }
             .analise-btn-flutuante { width: 60px; height: 60px; color: white; border-radius: 50%; border: none; box-shadow: 0 4px 8px rgba(0,0,0,0.2); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease-in-out; }
             .analise-btn-flutuante:hover { transform: scale(1.1); }
-            #analise-ocupacao-btn { background-color: #ff8400; /* Laranja */ }
-            #analise-ocupacao-btn-fechar { position: absolute; top: -10px; right: -10px; width: 28px; height: 28px; background-color: #dc3545; /* Vermelho */ z-index: 9998; }
-            #analise-ocupacao-btn-fechar svg { width: 16px; height: 16px; }
-            .analise-btn-flutuante svg { width: 28px; height: 28px; }
-            
-            /* Painel de Análise */
-            #analise-ocupacao-painel { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 750px; max-width: 95vw; max-height: 90vh; background: #fff; border-radius: 8px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); z-index: 10000; flex-direction: column; }
+            #analise-ocupacao-btn { background-color: #ff8400; }
+            #analise-ocupacao-btn-fechar { position: absolute; top: -10px; right: -10px; width: 28px; height: 28px; background-color: #dc3545; z-index: 9998; }
+            #analise-ocupacao-painel { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 850px; max-width: 95vw; max-height: 90vh; background: #fff; border-radius: 8px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); z-index: 10000; flex-direction: column; }
             #analise-ocupacao-painel .painel-header { padding: 15px 25px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-            #analise-ocupacao-painel .painel-header button.fechar-interno { background: transparent; border: none; font-size: 24px; font-weight: bold; cursor: pointer; color: #888; padding: 0 5px; line-height: 1; }
-            #analise-ocupacao-painel .painel-header button.fechar-interno:hover { color: #000; }
-            #analise-ocupacao-painel .painel-body { padding: 25px; overflow-y: auto; }
+            #analise-ocupacao-painel .painel-header button.fechar-interno { background: transparent; border: none; font-size: 24px; font-weight: bold; cursor: pointer; color: #888; }
+            #analise-ocupacao-painel .painel-body { padding: 25px; overflow-y: auto; font-family: sans-serif;}
             #analise-ocupacao-painel .painel-footer { padding: 15px 25px; border-top: 1px solid #eee; text-align: right; }
-            #analise-ocupacao-painel h2 { margin: 0; font-family: sans-serif; font-size: 20px; color: #333; }
+            #analise-ocupacao-painel h2, h4 { margin: 0; font-family: sans-serif; color: #333; }
+            #analise-ocupacao-painel h4 { margin-top: 20px; margin-bottom: 10px; }
             #analise-ocupacao-painel .controles { display: flex; align-items: flex-end; gap: 20px; }
-            #analise-ocupacao-painel .controles label { font-family: sans-serif; }
-            #analise-ocupacao-painel button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
             #analise-ocupacao-painel button:disabled { background-color: #ccc; cursor: not-allowed; }
-            #painel-btn-analisar { background: #007bff; color: white; }
-            #painel-btn-baixar { background: #198754; color: white; }
-            
-            /* Estilos do Gráfico de Resumo */
-            #painel-area-resultados { margin-top: 20px; min-height: 300px; }
-            .resumo-info { margin-bottom: 25px; font-size: 14px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-            .resumo-info strong { color: #000; }
-            .resumo-vertical-container { display: flex; align-items: flex-end; justify-content: space-around; height: 200px; padding: 10px; }
-            .resumo-vertical-grupo { display: flex; flex-direction: column; align-items: center; text-align: center; font-size: 12px; width: 80px; }
-            .resumo-vertical-valor { color: #333; font-weight: bold; margin-bottom: 5px; }
-            .resumo-vertical-barra-fundo { display: flex; align-items: flex-end; width: 35px; height: 150px; background-color: #e9ecef; border-radius: 4px; }
-            .resumo-vertical-barra-preenchimento { width: 100%; background-color: #0d6efd; border-radius: 4px; transition: height 0.8s ease-out; }
-            .resumo-vertical-rotulo { color: #666; margin-top: 8px; font-weight: 500; }
+            #painel-btn-analisar { background: #007bff; color: white; padding: 10px 20px; border-radius: 5px; font-size: 16px;}
+            #painel-btn-baixar { background: #198754; color: white; padding: 10px 20px; border-radius: 5px; font-size: 16px;}
+            .resumo-tabela { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 13px; }
+            .resumo-tabela th, .resumo-tabela td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+            .resumo-tabela th { background-color: #f2f2f2; }
+            .grafico-wrapper { margin-top: 25px; }
+            .grafico-legenda { display: flex; justify-content: center; gap: 20px; margin-bottom: 10px; font-size: 12px; }
+            .legenda-item { display: flex; align-items: center; gap: 5px; }
+            .legenda-item .cor { width: 12px; height: 12px; border-radius: 2px; }
+            .cor.ocup { background-color: #0d6efd; } .cor.serv { background-color: #198754; } .cor.fat { background-color: #ffc107; }
+            .resumo-grafico-container { display: flex; align-items: flex-end; justify-content: space-around; height: 220px; padding: 10px; border-left: 2px solid #eee; border-bottom: 2px solid #eee; }
+            .resumo-grafico-grupo { display: flex; flex-direction: column; align-items: center; }
+            .resumo-grafico-barras { display: flex; align-items: flex-end; height: 180px; gap: 2px; }
+            .resumo-grafico-barras .bar { width: 15px; border-radius: 3px 3px 0 0; }
+            .bar.ocup { background-color: #0d6efd; } .bar.serv { background-color: #198754; } .bar.fat { background-color: #ffc107; }
+            .resumo-grafico-rotulo { font-size: 12px; margin-top: 5px; font-weight: 500; }
             .loading-spinner { margin: 40px auto; width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #0d6efd; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         `;
         const styleTag = document.createElement('style'); styleTag.id = 'analise-ocupacao-styles'; styleTag.innerHTML = estilos;
         document.head.appendChild(styleTag);
 
-        const hoje = new Date(); const ontem = new Date(hoje); ontem.setDate(hoje.getDate() - 1);
-        const dataFimPadrao = this.formatarData(ontem); const dataInicioPadrao = this.formatarData(new Date(new Date().setDate(ontem.getDate() - 34)));
-        
+        // Lógica do Período Padrão
+        const hoje = new Date();
+        const dataFimPadrao = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+        const dataInicioPadrao = new Date(dataFimPadrao);
+        dataInicioPadrao.setMonth(dataInicioPadrao.getMonth() - 2);
+        dataInicioPadrao.setDate(1);
+
         const painelHtml = `
             <div id="analise-ocupacao-painel" style="display: none;">
                 <div class="painel-header">
-                    <h2>Análise de Taxa de Ocupação</h2>
+                    <h2>Análise de Indicadores</h2>
                     <button id="painel-btn-fechar-interno" class="fechar-interno" title="Fechar Painel">&times;</button>
                 </div>
                 <div class="painel-body">
                     <div class="controles">
-                        <div><label for="painel-data-inicio">Data Início</label><input type="date" id="painel-data-inicio" value="${dataInicioPadrao}"></div>
-                        <div><label for="painel-data-fim">Data Fim</label><input type="date" id="painel-data-fim" value="${dataFimPadrao}"></div>
+                        <div><label for="painel-data-inicio">Data Início</label><input type="date" id="painel-data-inicio" value="${this.formatarData(dataInicioPadrao)}"></div>
+                        <div><label for="painel-data-fim">Data Fim</label><input type="date" id="painel-data-fim" value="${this.formatarData(dataFimPadrao)}"></div>
                         <button id="painel-btn-analisar">Analisar</button>
                     </div>
                     <div id="painel-area-resultados">
@@ -249,23 +301,19 @@ window.analiseOcupacaoScript = {
                     </div>
                 </div>
                 <div class="painel-footer">
-                    <button id="painel-btn-baixar" disabled>Baixar Relatório (CSV)</button>
+                    <button id="painel-btn-baixar" disabled>Baixar Relatório Completo (CSV)</button>
                 </div>
             </div>
         `;
-        document.body.insertAdjacentHTML('beforeend', painelHtml);
+        if (!document.getElementById('analise-ocupacao-painel')) document.body.insertAdjacentHTML('beforeend', painelHtml);
         
-        const containerBotoes = document.createElement('div');
-        containerBotoes.id = 'analise-ocupacao-btn-container';
-        containerBotoes.innerHTML = `
-            <button id="analise-ocupacao-btn" class="analise-btn-flutuante" title="Abrir/Fechar Painel de Análise">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg>
-            </button>
-            <button id="analise-ocupacao-btn-fechar" class="analise-btn-flutuante" title="Remover Ferramenta de Análise">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
-            </button>
+        const containerBotoesHtml = `
+            <div id="analise-ocupacao-btn-container">
+                <button id="analise-ocupacao-btn" class="analise-btn-flutuante" title="Abrir/Fechar Painel de Análise"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"></path></svg></button>
+                <button id="analise-ocupacao-btn-fechar" class="analise-btn-flutuante" title="Remover Ferramenta de Análise"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg></button>
+            </div>
         `;
-        document.body.appendChild(containerBotoes);
+        if (!document.getElementById('analise-ocupacao-btn-container')) document.body.insertAdjacentHTML('beforeend', containerBotoesHtml);
         
         document.getElementById('analise-ocupacao-btn').onclick = this.togglePainel.bind(this);
         document.getElementById('analise-ocupacao-btn-fechar').onclick = this.uninstall.bind(this);
@@ -277,5 +325,4 @@ window.analiseOcupacaoScript = {
     }
 };
 
-// Inicia o setup para criar o botão e o painel na página
 window.analiseOcupacaoScript.setup();
