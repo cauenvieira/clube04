@@ -1,6 +1,10 @@
 (() => {
     'use strict';
 
+    const scriptZip = document.createElement('script');
+    scriptZip.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    document.head.appendChild(scriptZip);
+
     const paginaAlvo = 'https://clube04.com.br/digital/gerenciarponto.php';
 
     if (window.location.href.split('?')[0] !== paginaAlvo) {
