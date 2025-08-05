@@ -72,10 +72,11 @@
             return agrupado;
         }
 
-        function formatarMesAno(mesString) {
-            const [ano, mesNum] = mesString.split('-');
-            const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-            return `${meses[parseInt(mesNum, 10) - 1]} de ${ano}`;
+        function nomeParaArquivo(nome, mes) {
+            const partes = nome.trim().split(' ');
+            const primeiro = partes[0].toLowerCase();
+            const ultimo = partes[partes.length - 1].toLowerCase();
+            return `relatorio_ponto_${primeiro}_${ultimo}_${mes.replace('-', '')}.csv`;
         }
 
         async function gerarRelatorio() {
@@ -124,57 +125,47 @@
             }
             dadosParaCSV = todosOsDados;
             exibirResultados(todosOsDados, mesInicio, mesFim);
+            exportarArquivosSeparados(dadosParaCSV);
         }
 
-        function exibirResultados(dados, mesInicio, mesFim) {
-            const painelResultados = document.getElementById('dr-resultados');
-            if (dados.length === 0) {
-                painelResultados.innerHTML = '<p>Nenhum dado encontrado para os filtros selecionados.</p>';
-                return;
-            }
-            const dadosAgrupados = agruparDados(dados);
-            let htmlFinal = `<div style="text-align:center; margin-bottom:15px;"><button id="dr-download-btn" class="dr-btn dr-btn-success">Baixar Relatório Completo (CSV)</button></div>`;
-            for (const nomeColaborador in dadosAgrupados) {
-                htmlFinal += `<h2 class="dr-colab-header">${nomeColaborador}</h2>`;
-                for (const mes in dadosAgrupados[nomeColaborador]) {
-                    const dadosDoMes = dadosAgrupados[nomeColaborador][mes];
-                    const diasTrabalhados = dadosDoMes.filter(d => d.totalHoras !== '00:00');
-                    const totalMinutosTrabalhados = diasTrabalhados.reduce((acc, d) => acc + calcularMinutos(d.totalHoras), 0);
-                    const mediaMinutos = diasTrabalhados.length > 0 ? totalMinutosTrabalhados / diasTrabalhados.length : 0;
-                    const mediaHoras = `${String(Math.floor(mediaMinutos / 60)).padStart(2, '0')}:${String(Math.round(mediaMinutos % 60)).padStart(2, '0')}`;
-                    const diasIrregulares = dadosDoMes.filter(d => d.horarios.length % 2 !== 0 && d.horarios.length > 0).length;
-                    htmlFinal += `<div class="dr-summary-box"><h3 class="dr-month-header">${formatarMesAno(mes)}</h3><p><strong>Dias com registro:</strong> ${diasTrabalhados.length}</p><p><strong>Média de horas/dia:</strong> ${mediaHoras}</p><p style="color:${diasIrregulares > 0 ? '#dc3545' : '#28a745'};"><strong>Dias com batidas ímpares (erros):</strong> ${diasIrregulares}</p></div>`;
-                    htmlFinal += `<div class="dr-table-wrapper"><table class="dr-table"><thead><tr><th>Data</th><th>Dia</th><th>E1</th><th>S1</th><th>E2</th><th>S2</th><th>E3</th><th>S3</th><th>Total</th></tr></thead><tbody>`;
-                    dadosDoMes.forEach(d => {
-                        const temErro = d.horarios.length > 0 && d.horarios.length % 2 !== 0;
-                        const horariosColoridos = d.horariosPadronizados.map((h, i) => {
-                            const cor = h ? (i % 2 === 0 ? '#28a745' : '#dc3545') : '#ccc';
-                            return `<td style="color:${cor}; font-weight:bold;">${h}</td>`;
-                        }).join('');
-                        htmlFinal += `<tr ${temErro ? 'class="dr-row-error"' : ''}><td>${d.data.split('-').reverse().join('/')}</td><td>${d.diaSemana.substring(0,3)}</td>${horariosColoridos}<td><strong>${d.totalHoras}</strong></td></tr>`;
-                    });
-                    htmlFinal += `</tbody></table></div>`;
+        async function exportarArquivosSeparados(dados) {
+            const agrupado = agruparDados(dados);
+            const zip = new JSZip();
+            let arquivos = 0;
+            for (const nome in agrupado) {
+                for (const mes in agrupado[nome]) {
+                    const registros = agrupado[nome][mes];
+                    const cabecalho = ['Colaborador', 'Data', 'Dia da Semana', 'Entrada 1', 'Saida 1', 'Entrada 2', 'Saida 2', 'Entrada 3', 'Saida 3', 'Total Horas Trabalhadas'];
+                    const conteudoCsv = registros.map(e => [
+                        `"${e.colaborador}"`, `"${e.data}"`, `"${e.diaSemana}"`,
+                        ...e.horariosPadronizados.map(h => `"${h}"`), `"${e.totalHoras}"`
+                    ].join(';')).join('\n');
+                    const csvFinal = cabecalho.join(';') + '\n' + conteudoCsv;
+                    const nomeArquivo = nomeParaArquivo(nome, mes);
+                    zip.file(nomeArquivo, csvFinal);
+                    arquivos++;
                 }
             }
-            painelResultados.innerHTML = htmlFinal;
-            document.getElementById('dr-download-btn').onclick = () => baixarCSV(mesInicio, mesFim);
-        }
-
-        function baixarCSV(mesInicio, mesFim) {
-            if (dadosParaCSV.length === 0) return;
-            const cabecalho = ['Colaborador', 'Data', 'Dia da Semana', 'Entrada 1', 'Saida 1', 'Entrada 2', 'Saida 2', 'Entrada 3', 'Saida 3', 'Total Horas Trabalhadas'];
-            const conteudoCsv = dadosParaCSV.map(e => [
-                `"${e.colaborador}"`, `"${e.data}"`, `"${e.diaSemana}"`,
-                ...e.horariosPadronizados.map(h => `"${h}"`), `"${e.totalHoras}"`
-            ].join(';')).join('\n');
-            const csvFinal = cabecalho.join(';') + '\n' + conteudoCsv;
-            const blob = new Blob([csvFinal], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = `relatorio_ponto_${mesInicio}_a_${mesFim}.csv`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            if (arquivos === 1) {
+                const blob = await zip.generateAsync({ type: 'blob' });
+                zip.forEach(async (path, file) => {
+                    const content = await file.async('blob');
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(content);
+                    link.download = path;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                });
+            } else {
+                const blob = await zip.generateAsync({ type: 'blob' });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "relatorios_ponto.zip";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
         }
 
         function criarPainel() {
