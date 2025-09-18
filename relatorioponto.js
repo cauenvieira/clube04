@@ -16,7 +16,7 @@
         }
         // Adicione o filtro de colaboradores aqui
         const whitelistNomes = [
-            'Giovana Stuart dos Reis',
+            'Ana Clara de Olivera Franco',
             'Isabely de Barros Quirino Neves',
             'Michelle Carolina Ladislau de Sousa'
         ];
@@ -73,7 +73,7 @@
             return `${meses[parseInt(mesNum, 10) - 1]} de ${ano}`;
         }
 
-        // Validações ajustadas conforme sua nova orientação
+        // Validações
         function validarBatidas(dia, horarios, totalHoras, diaSemana) {
             const validacoes = [];
             const batidas = horarios.filter(Boolean);
@@ -113,11 +113,11 @@
                     validacoes.push('Qtd de horas trabalhadas (>9h)');
                 }
             } else if (diaSemana !== 'Domingo') {
-                if (minutosTrabalhados > 0 && minutosTrabalhados < 7 * 60) {
-                    validacoes.push('Qtd de horas trabalhadas (<7h)');
+                if (minutosTrabalhados > 0 && minutosTrabalhados < 6 * 60) {
+                    validacoes.push('Qtd de horas trabalhadas (<6h)');
                 }
-                if (minutosTrabalhados > 10 * 60) {
-                    validacoes.push('Qtd de horas trabalhadas (>10h)');
+                if (minutosTrabalhados > 8 * 60) {
+                    validacoes.push('Qtd de horas trabalhadas (>8h)');
                 }
             }
             // Domingo: nunca valida hora trabalhada
