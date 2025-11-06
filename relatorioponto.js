@@ -17,7 +17,7 @@
         // Adicione o filtro de colaboradores aqui
         const whitelistNomes = [
             'Ana Clara de Oliveira Franco',
-            'Isabely de Barros Quirino Neves',
+            'Fabio Ferrenha Cerqueira',
             'Michelle Carolina Ladislau de Sousa'
         ];
 
