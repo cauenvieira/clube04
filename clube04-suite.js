@@ -1,5 +1,6 @@
 /**
- * CLUBE04 HUB - SUITE CENTRAL (Refatorado)
+ * CLUBE04 HUB - SUITE CENTRAL
+ * Versão: 5.3.0
  * Design estilo "Plugin" com texto circular e lógica de painéis exclusivos.
  */
 (function () {
