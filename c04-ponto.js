@@ -1,27 +1,26 @@
 /**
  * CLUBE04 SUITE - MÓDULO PONTO (c04-ponto.js)
- * Versão: 5.2.0
+ * Versão: 5.3.0
  * * --- LÓGICA DO SCRIPT ---
- * 1. Crawler Inteligente: 
- * - Acessa a listagem geral (pessoa.php) via fetch.
- * - Filtra visualmente quem é de "São Paulo - Mogi das Cruzes" ANTES de abrir detalhes.
- * - Acessa detalhes (pessoaeditar.php) apenas dos filtrados para validar Cargo e Status.
- * * 2. Gerador em Background (Tecnologia v4.30.0):
- * - Ao clicar em "Gerar", cria um IFRAME oculto carregando 'gerenciarponto.php'.
- * - Injeta os filtros (Data, Colaborador) dentro do Iframe.
- * - Dispara o botão de busca e intercepta o retorno do jQuery AJAX.
- * - Extrai os dados da tabela resultante sem que o usuário precise sair da tela atual.
+ * 1. Crawler Inteligente (Filtro Rápido):
+ * - Acessa a listagem geral (pessoa.php).
+ * - Filtra visualmente quem é de "São Paulo - Mogi das Cruzes" NA LISTAGEM.
+ * - Acessa detalhes (pessoaeditar.php) APENAS dos filtrados para validar Cargo e Status.
+ * * 2. Gerador em Background (Iframe Oculto):
+ * - Cria um IFRAME invisível carregando 'gerenciarponto.php'.
+ * - Injeta os filtros (Data, Colaborador) e dispara a busca via script.
+ * - Intercepta o evento AJAX do sistema para saber quando a tabela carregou.
+ * - Extrai os dados sem que o usuário precise sair da tela.
  * * --- CHANGELOG ---
- * [5.2.0] - Implementação de Iframe para geração em background (não precisa estar na pág de ponto).
- * - Filtro de Unidade movido para a etapa inicial (listagem) para performance.
- * - Restrição de cargos para Cuidador, Tosador e Consultor.
- * [5.1.0] - Versão inicial integrada à Suite.
+ * [5.3.0] - Correção de sintaxe (Strict Block Scoping) para evitar erros de 'const'.
+ * [5.2.0] - Implementação de Iframe para geração em background.
+ * - Otimização do filtro de cidade na primeira etapa.
  */
 
 (function () {
     'use strict';
 
-    // Se o painel já existir, apenas mostra
+    // Se o painel já existir, apenas mostra e para a execução
     if (document.getElementById('dr-painel')) {
         document.getElementById('dr-painel').style.display = 'block';
         return;
@@ -30,13 +29,16 @@
     // LISTENER DO HUB
     window.addEventListener('c04_open_ponto', () => {
         const p = document.getElementById('dr-painel');
-        if(p) p.style.display = 'block';
-        else initPonto();
+        if (p) {
+            p.style.display = 'block';
+        } else {
+            initPonto();
+        }
     });
     
     // --- CONFIGURAÇÕES ---
     const UNIDADE_ALVO = "São Paulo - Mogi das Cruzes";
-    // Cargos permitidos (Case sensitive parcial, verificamos se contem a string)
+    // Cargos permitidos (Case sensitive parcial)
     const CARGOS_ALVO = ["Cuidador", "Tosador", "Consultor"]; 
     
     // URLs do sistema
@@ -60,7 +62,7 @@
         }
     }
 
-    // Cria um Iframe oculto para processamento em background (Técnica do 4.30.0)
+    // Cria um Iframe oculto para processamento em background
     async function createIframe(url) {
         const ifr = document.createElement('iframe');
         ifr.style.display = "none";
@@ -86,26 +88,26 @@
             }
 
             const timeoutId = setTimeout(() => { 
-                // Fallback: se o ajaxComplete não disparar em 10s, tenta resolver mesmo assim (pode ter carregado cache)
                 console.warn("Timeout AJAX Hook - Tentando ler tabela mesmo assim...");
                 resolve(); 
             }, 10000);
 
             const hook = (event, xhr, settings) => {
-                // Verifica se a requisição AJAX é de busca de pontos
                 if (settings && settings.url && settings.url.includes('gerenciarponto')) {
                     win.$(doc).off("ajaxComplete", hook); 
                     clearTimeout(timeoutId);
-                    // Pequeno delay para renderização do DOM da tabela
-                    setTimeout(resolve, 500);
+                    setTimeout(resolve, 500); // Delay para renderização DOM
                 }
             };
             
             win.$(doc).on("ajaxComplete", hook);
             
             const btn = doc.querySelector(btnSelector);
-            if(btn) btn.click();
-            else reject("Botão de busca não encontrado no iframe.");
+            if (btn) {
+                btn.click();
+            } else {
+                reject("Botão de busca não encontrado no iframe.");
+            }
         });
     }
 
@@ -127,15 +129,14 @@
         // 2. Filtra Mogi na própria tabela (Coluna 6 / Index 5)
         linhas.forEach(tr => {
             const cols = tr.querySelectorAll('td');
-            if (cols.length < 6) return;
+            if (cols.length < 6) { return; }
 
             const colNome = cols[0];
             const nome = colNome.innerText.trim();
-            [cite_start]const unidadeTexto = cols[5].innerText.trim(); // Coluna da Unidade [cite: 63]
+            const unidadeTexto = cols[5].innerText.trim();
 
             // Validação de Unidade IMEDIATA
-            // Verifica se contém a string exata e ignora se tiver múltiplas linhas (quebra de linha) se não for o desejado
-            if (!unidadeTexto.includes(UNIDADE_ALVO)) return;
+            if (!unidadeTexto.includes(UNIDADE_ALVO)) { return; }
 
             // Extrai ID
             const onclick = colNome.getAttribute('onclick') || "";
@@ -168,25 +169,29 @@
                 const htmlEdit = await fetchTexto(URL_DETALHE, fd);
                 const docEdit = new DOMParser().parseFromString(htmlEdit, 'text/html');
                 
-                [cite_start]// Status [cite: 146]
+                // Status
                 const btnStatus = docEdit.querySelector('button[data-id="statusPessoa"]');
                 const statusTexto = btnStatus ? btnStatus.getAttribute('title') : "Desconhecido";
 
-                [cite_start]// Cargo [cite: 148-150]
+                // Cargo
                 const btnCargo = docEdit.querySelector('button[data-id="idCargo"]');
                 const cargoTexto = btnCargo ? btnCargo.getAttribute('title') : "";
 
-                // Valida Cargo (Contém "Cuidador", "Tosador" ou "Consultor")
+                // Valida Cargo
                 const cargoValido = CARGOS_ALVO.some(alvo => cargoTexto.includes(alvo));
 
                 if (cargoValido) {
                     finais.push({ ...cand, cargo: cargoTexto, status: statusTexto });
                 }
 
-            } catch (e) { console.error(e); }
+            } catch (e) { 
+                console.error(e); 
+            }
             
             // Pequeno respiro para a CPU
-            if(count % 5 === 0) await new Promise(r => setTimeout(r, 20));
+            if (count % 5 === 0) {
+                await new Promise(r => setTimeout(r, 20));
+            }
         }
 
         listaColaboradoresCache = finais;
@@ -202,7 +207,7 @@
         const filtrados = listaColaboradoresCache.filter(c => checkInativos ? true : c.status === 'Ativo');
         filtrados.sort((a,b) => a.nome.localeCompare(b.nome));
 
-        if(filtrados.length === 0) {
+        if (filtrados.length === 0) {
             listaDiv.innerHTML = '<p style="color:#777; padding:10px;">Nenhum colaborador compatível.</p>';
             return;
         }
@@ -225,7 +230,10 @@
 
     async function gerarRelatorio() {
         const checkboxes = document.querySelectorAll('#dr-colaboradores-lista input[type="checkbox"]:checked');
-        if (checkboxes.length === 0) return alert('Selecione pelo menos um colaborador.');
+        if (checkboxes.length === 0) {
+            alert('Selecione pelo menos um colaborador.');
+            return;
+        }
 
         const mesInicio = document.getElementById('dr-mes-inicio').value;
         const mesFim = document.getElementById('dr-mes-fim').value;
@@ -278,15 +286,15 @@
                 const elIni = doc.getElementById('dataInicioBusca');
                 const elFim = doc.getElementById('dataFimBusca');
                 
-                if(elIni) elIni.value = mes + '-01';
-                if(elFim) elFim.value = mes + '-' + lastDay;
+                if (elIni) { elIni.value = mes + '-01'; }
+                if (elFim) { elFim.value = mes + '-' + lastDay; }
 
-                // Seleciona Colaborador (Bootstrap Select do Metronic Theme)
+                // Seleciona Colaborador (Bootstrap Select)
                 const select = doc.getElementById('idColaboradorBusca');
-                if(win.$ && select) {
+                if (win.$ && select) {
                     win.$(select).val(idColab).selectpicker('refresh');
                 } else if (select) {
-                    select.value = idColab; // Fallback sem jQuery
+                    select.value = idColab;
                 }
 
                 // Dispara Busca e Aguarda
@@ -300,10 +308,10 @@
                 const rows = doc.querySelectorAll('#idTabelaPontos tbody tr');
                 rows.forEach(r => {
                     const tds = r.querySelectorAll('td');
-                    if(tds.length < 3) return;
+                    if (tds.length < 3) { return; }
                     
                     const dataTxt = tds[0].innerText.trim();
-                    if(!dataTxt || dataTxt.includes("Nenhum")) return;
+                    if (!dataTxt || dataTxt.includes("Nenhum")) { return; }
 
                     const inputs = r.querySelectorAll('input[type="time"]');
                     const horarios = Array.from(inputs).map(i => i.value).filter(v=>v);
@@ -312,8 +320,8 @@
                     const total = totalMatch ? totalMatch[1] : '00:00';
                     
                     let alertas = [];
-                    if(horarios.length % 2 !== 0) alertas.push("Marcação Ímpar");
-                    if(horarios.length === 0) alertas.push("Sem Marcação");
+                    if (horarios.length % 2 !== 0) { alertas.push("Marcação Ímpar"); }
+                    if (horarios.length === 0) { alertas.push("Sem Marcação"); }
 
                     dadosExportacao.push({
                         colaborador: nomeColab,
@@ -397,7 +405,7 @@
 
         const html = `
             <div id="dr-painel">
-                <div id="dr-header"><span>🕒 Relatório de Ponto v5.2</span><span id="dr-close">&times;</span></div>
+                <div id="dr-header"><span>🕒 Relatório de Ponto v5.3</span><span id="dr-close">&times;</span></div>
                 <div id="dr-body">
                     <div class="dr-filtros-row">
                         <div style="flex:1"><label>De:</label><input type="month" id="dr-mes-inicio" value="${mesPadrao}"></div>
