@@ -1,5 +1,6 @@
 /**
  * CLUBE04 SUITE - HUB CENTRAL
+ * Versão: 5.2.0
  * Gerencia o menu flutuante e carrega os módulos.
  */
 (function () {
