@@ -1,62 +1,122 @@
-(function() {
-    'use strict';
+/**
+ * CLUBE04 HUB - SUITE CENTRAL
+ * Versão: 5.4.0
+ * Atualização: Inclusão do módulo de Agenda Inteligente (v16)
+ */
+(function () {
+    "use strict";
 
-    window.addEventListener('c04_open_agenda', () => {
-        const p = document.getElementById('painel-analise-agenda');
-        if(p) p.style.display = 'flex';
-        else iniciarAgenda();
-    });
+    // --- CONFIGURAÇÃO ---
+    const BASE_URL = 'https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/';
+    const LAYOUT_CONFIG = {
+        mainColor: '#000000',
+        accentColor: '#ff6600',
+        textColor: '#ffffff',
+        suiteName: 'SUITE • CB04 • MOGI •'
+    };
 
-    function iniciarAgenda() {
-        if(document.getElementById('painel-analise-agenda')) return;
+    const tools = [
+        { id: 'metas',    icon: '🚀', color: '#2563eb', tooltip: 'Metas',    script: 'c04-metas.js' },
+        { id: 'ponto',    icon: '🕒', color: '#10b981', tooltip: 'Ponto',    script: 'c04-ponto.js' },
+        // NOVO MÓDULO ADICIONADO AQUI:
+        { id: 'agenda',   icon: '📅', color: '#f59e0b', tooltip: 'Agenda & Projeção', script: 'c04-agenda.js' },
+        { id: 'ocupacao', icon: '📊', color: '#8b5cf6', tooltip: 'Ocupação', script: 'c04-ocupacao.js' }
+    ];
 
-        // --- CSS INJECTION ---
-        const css = `
-            #painel-analise-agenda { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90vw; max-width: 900px; height: 90vh; background-color: #333; color: #f1f1f1; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; border-radius: 10px; flex-direction: column; font-family: sans-serif; }
-            #painel-analise-agenda .header { background: linear-gradient(135deg, #f59e0b, #d97706); padding: 15px; display: flex; justify-content: space-between; align-items: center; color: white; border-radius: 10px 10px 0 0; }
-            #fechar-painel-analise { background: none; border: none; color: white; font-size: 1.8em; cursor: pointer; }
-            #painel-analise-agenda .conteudo { padding: 20px; overflow-y: auto; flex-grow: 1; }
-            .form-grid { display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; align-items: center; margin-bottom: 20px; }
-            .form-grid input { background-color: #555; border: 1px solid #777; color: white; padding: 8px; border-radius: 4px; }
-            .btn-acao { display: block; width: 100%; padding: 12px; background-color: #e67e22; border: none; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; background-color: #444; padding: 15px; border-radius: 5px; margin: 15px 0; }
-            .report-table { width: 100%; margin-top: 10px; border-collapse: collapse; } .report-table th, .report-table td { border: 1px solid #777; padding: 8px; text-align: center; }
-        `;
-        const style = document.createElement('style'); style.innerHTML = css; document.head.appendChild(style);
+    // --- LÓGICA DO SISTEMA ---
 
-        // --- HTML INJECTION ---
-        const hoje = new Date().toISOString().split('T')[0];
-        const html = `
-            <div id="painel-analise-agenda">
-                <div class="header"><h2>Projeção de Agenda</h2><button id="fechar-painel-analise">×</button></div>
-                <div class="conteudo">
-                    <div class="form-grid">
-                        <label>Histórico (Início/Fim):</label><div><input type="date" id="data-inicio-analise"> <input type="date" id="data-fim-analise"></div>
-                        <label>Projetar a partir de:</label><input type="date" id="data-vigente-input" value="${hoje}">
-                        <label>Meta Ocupação (%):</label><input type="number" id="meta-ocupacao-input" value="65">
-                    </div>
-                    <button id="btn-gerar-relatorio" class="btn-acao">Gerar Plano</button>
-                    <div id="resultado-historico" style="margin-top:20px;"></div>
-                    <div id="resultado-projecao"></div>
-                </div>
-            </div>`;
-        const div = document.createElement('div'); div.innerHTML = html; document.body.appendChild(div);
+    // Fecha painéis abertos (IDs conhecidos das ferramentas)
+    window.fecharPaineisSuite = function() {
+        // IDs atualizados para incluir o novo painel da agenda
+        const ids = ['c04-painel', 'dr-painel', 'painel-analise-agenda', 'c04-painel-agenda', 'analise-ocupacao-painel'];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+    };
 
-        // --- LÓGICA (Simplificada para o Hub) ---
-        // (Aqui entraria toda a lógica complexa do seu script original de Agenda. 
-        //  Como o script é muito grande, estou colocando apenas a estrutura de eventos.
-        //  Você deve COPIAR E COLAR a lógica de cálculo, coleta e renderização do seu projecaoagenda.js aqui dentro)
-        
-        document.getElementById('fechar-painel-analise').onclick = () => document.getElementById('painel-analise-agenda').style.display = 'none';
-        document.getElementById('btn-gerar-relatorio').onclick = () => {
-            alert("A lógica de geração deve ser copiada do script original para este arquivo.");
-            // COPIAR FUNÇÕES handleGerarRelatorio, calcularMetas, etc DO projecaoagenda.js
+    function loadModule(tool) {
+        toggleMenu(false);
+        window.fecharPaineisSuite(); 
+
+        if (document.getElementById(`script-${tool.id}`)) {
+            window.dispatchEvent(new Event(`c04_open_${tool.id}`));
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.id = `script-${tool.id}`;
+        script.src = `${BASE_URL}${tool.script}?t=${new Date().getTime()}`;
+        script.onload = () => {
+            window.dispatchEvent(new Event(`c04_open_${tool.id}`));
         };
-        
-        // Exibe o painel
-        document.getElementById('painel-analise-agenda').style.display = 'flex';
+        document.body.appendChild(script);
     }
-    
-    // Inicia se não existir
-    if(!document.getElementById('painel-analise-agenda')) iniciarAgenda();
+
+    // --- INTERFACE (UI) ---
+    function initMenu() {
+        if (document.getElementById('c04-fab-container')) return;
+
+        const style = document.createElement('style');
+        style.innerHTML = `
+            #c04-fab-container { position: fixed; bottom: 20px; right: 20px; z-index: 99999; display: flex; flex-direction: column-reverse; align-items: center; gap: 12px; }
+            .c04-fab-sub { width: 48px; height: 48px; border-radius: 50%; border: none; color: white; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 22px; opacity: 0; transform: translateY(20px) scale(0.8); pointer-events: none; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: relative; }
+            .c04-fab-sub.visible { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+            .c04-fab-sub:hover { transform: scale(1.15); box-shadow: 0 6px 16px rgba(0,0,0,0.4); }
+            .c04-fab-sub::after { content: attr(data-tooltip); position: absolute; right: 60px; background: #222; color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 12px; font-family: sans-serif; white-space: nowrap; opacity: 0; transform: translateX(10px); transition: all 0.2s; pointer-events: none; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+            .c04-fab-sub:hover::after { opacity: 1; transform: translateX(0); }
+            .c04-fab-main { width: 70px; height: 70px; background: ${LAYOUT_CONFIG.mainColor}; border-radius: 50%; border: none; cursor: pointer; position: relative; box-shadow: 0 5px 20px rgba(0,0,0,0.4); transition: transform 0.3s; display: flex; align-items: center; justify-content: center; }
+            .c04-fab-main:hover { transform: scale(1.05); }
+            .c04-icon-center { font-size: 28px; z-index: 2; transition: transform 0.4s; }
+            .c04-fab-main.active .c04-icon-center { transform: rotate(135deg); color: #ff4444; }
+            .c04-text-ring { position: absolute; top: 0; left: 0; width: 100%; height: 100%; animation: c04-spin 10s linear infinite; pointer-events: none; opacity: 0.9; }
+            .c04-fab-main:hover .c04-text-ring { animation-play-state: paused; opacity: 1; }
+            @keyframes c04-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+            .c04-text-ring text { font-family: 'Courier New', monospace; font-weight: bold; font-size: 13.5px; fill: ${LAYOUT_CONFIG.accentColor}; letter-spacing: 2px; }
+        `;
+        document.head.appendChild(style);
+
+        const container = document.createElement('div');
+        container.id = 'c04-fab-container';
+
+        tools.forEach((t) => {
+            const btn = document.createElement('button');
+            btn.className = `c04-fab-sub`;
+            btn.style.background = t.color;
+            btn.innerHTML = t.icon;
+            btn.setAttribute('data-tooltip', t.tooltip);
+            btn.onclick = () => loadModule(t);
+            container.appendChild(btn);
+        });
+
+        const mainBtn = document.createElement('button');
+        mainBtn.className = 'c04-fab-main';
+        const svgContent = `
+            <svg class="c04-text-ring" viewBox="0 0 100 100">
+                <path id="c04-curve" d="M 50, 50 m -37, 0 a 37,37 0 1,1 74,0 a 37,37 0 1,1 -74,0" fill="transparent"/>
+                <text width="500"><textPath xlink:href="#c04-curve">${LAYOUT_CONFIG.suiteName}</textPath></text>
+            </svg>
+            <div class="c04-icon-center">🧩</div>
+        `;
+        mainBtn.innerHTML = svgContent;
+        mainBtn.onclick = () => toggleMenu();
+        container.appendChild(mainBtn);
+        document.body.appendChild(container);
+
+        let isOpen = false;
+        window.toggleMenu = function(forceState) {
+            isOpen = forceState !== undefined ? forceState : !isOpen;
+            mainBtn.classList.toggle('active', isOpen);
+            const subBtns = container.querySelectorAll('.c04-fab-sub');
+            subBtns.forEach((btn, index) => {
+                if (isOpen) {
+                    const delay = (subBtns.length - 1 - index) * 60;
+                    setTimeout(() => btn.classList.add('visible'), delay);
+                } else {
+                    btn.classList.remove('visible');
+                }
+            });
+        };
+    }
+    initMenu();
 })();
