@@ -6,7 +6,7 @@
     "use strict";
 
     // URL base para os módulos (Ajuste para seu repo)
-    const BASE_URL = 'https://cdn.jsdelivr.net/gh/SEU_USUARIO/SEU_REPO/main/';
+    const BASE_URL = 'https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/';
 
     const tools = [
         { id: 'metas',    icon: '🚀', color: '#2563eb', tooltip: 'Dashboard de Metas', script: 'c04-metas.js' },
