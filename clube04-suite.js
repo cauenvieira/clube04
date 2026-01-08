@@ -1,12 +1,17 @@
 /**
  * CLUBE04 HUB - SUITE CENTRAL
- * Versão: 5.8.0 (Toggle Master & Layout Clean)
+ * Versão: 5.10.0 (Hybrid Module Loader)
  */
 (function () {
     "use strict";
 
-    // --- CONFIGURAÇÃO ---
-    const BASE_URL = 'http://127.0.0.1:8080/'; 
+    // --- CONFIGURAÇÃO DE AMBIENTE ---
+    // O sistema tentará carregar do LOCAL. Se falhar, busca do PROD.
+    const ENV_URLS = {
+        LOCAL: 'http://127.0.0.1:8080/',
+        PROD:  'https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/'
+    };
+
     const LAYOUT_CONFIG = {
         mainColor: '#000000',
         accentColor: '#ff6600',
@@ -24,7 +29,7 @@
 
     // --- LÓGICA DO SISTEMA ---
 
-    // Lista atualizada com TODOS os IDs de painéis dos seus scripts
+    // Função global para fechar qualquer painel aberto
     window.fecharPaineisSuite = function() {
         const ids = [
             'c04-painel',           // Metas
@@ -40,26 +45,47 @@
     };
 
     function loadModule(tool) {
-        // 1. Recolhe os botões do menu
+        // 1. Fecha o menu e outros painéis
         toggleMenu(false); 
-        
-        // 2. Fecha qualquer outra janela aberta antes de abrir a nova
         window.fecharPaineisSuite(); 
 
-        // 3. Verifica se o script já existe
+        // 2. Se o script já existe na página, apenas dispara o evento de abertura
         if (document.getElementById(`script-${tool.id}`)) {
             window.dispatchEvent(new Event(`c04_open_${tool.id}`));
             return;
         }
 
-        // 4. Carrega o script se não existir
-        const script = document.createElement('script');
-        script.id = `script-${tool.id}`;
-        script.src = `${BASE_URL}${tool.script}?t=${new Date().getTime()}`;
-        script.onload = () => {
-            window.dispatchEvent(new Event(`c04_open_${tool.id}`));
+        // 3. Função auxiliar para injetar o script com Fallback (Híbrido)
+        const injectScript = (baseUrl, isRetry = false) => {
+            const script = document.createElement('script');
+            script.id = `script-${tool.id}`;
+            // Adiciona timestamp para evitar cache agressivo
+            script.src = `${baseUrl}${tool.script}?t=${new Date().getTime()}`;
+
+            script.onload = () => {
+                console.log(`✅ [SUITE] Módulo '${tool.id}' carregado via ${isRetry ? 'PROD (GitHub)' : 'LOCAL'}.`);
+                window.dispatchEvent(new Event(`c04_open_${tool.id}`));
+            };
+
+            script.onerror = () => {
+                // Remove o script falho do DOM
+                script.remove();
+                
+                if (!isRetry) {
+                    console.warn(`⚠️ [SUITE] Falha ao carregar '${tool.id}' localmente. Tentando GitHub...`);
+                    // Tenta novamente usando a URL de Produção
+                    injectScript(ENV_URLS.PROD, true);
+                } else {
+                    console.error(`❌ [SUITE] Erro Crítico: Não foi possível carregar o módulo '${tool.id}'.`);
+                    alert(`Não foi possível carregar a ferramenta ${tool.tooltip}. Verifique sua conexão.`);
+                }
+            };
+
+            document.body.appendChild(script);
         };
-        document.body.appendChild(script);
+
+        // Inicia tentando carregar do Local
+        injectScript(ENV_URLS.LOCAL);
     }
 
     function resetSuiteAndClear() {
@@ -116,7 +142,7 @@
         const container = document.createElement('div');
         container.id = 'c04-fab-container';
 
-        // Botão Principal
+        // Botão Principal com Badge
         const mainBtn = document.createElement('button');
         mainBtn.className = 'c04-fab-main';
         mainBtn.innerHTML = `
@@ -152,7 +178,7 @@
 
         document.body.appendChild(container);
 
-        // --- BADGE ---
+        // --- EXPOR FUNÇÃO DE BADGE ---
         window.c04UpdateBadge = function(count) {
             const b = document.getElementById('c04-main-badge');
             if(b) {
@@ -196,24 +222,19 @@
 
             function closeDragElement() {
                 document.onmouseup = null; document.onmousemove = null;
-                if (!hasMoved) {
-                    // Clique simples (não arrastou)
-                    toggleMenu();
-                }
+                if (!hasMoved) toggleMenu();
                 setTimeout(() => { isDragging = false; }, 100);
             }
         }
         makeDraggable(container);
 
         let isOpen = false;
-        
         window.toggleMenu = function(forceState) {
             if (isDragging) return;
             
             const newState = forceState !== undefined ? forceState : !isOpen;
-            
-            // Se estiver FECHANDO o menu, também fecha as janelas (lógica solicitada)
-            // Mas apenas se for um toggle manual (click no botão principal)
+
+            // Se for fechar o menu e não foi um drag, fecha também os painéis
             if (isOpen && !newState && forceState === undefined) {
                  window.fecharPaineisSuite();
             }
