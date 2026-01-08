@@ -1,442 +1,699 @@
 /**
- * CLUBE04 SUITE - MÓDULO PONTO (c04-ponto.js)
- * Versão: 5.3.0
- * * --- LÓGICA DO SCRIPT ---
- * 1. Crawler Inteligente (Filtro Rápido):
- * - Acessa a listagem geral (pessoa.php).
- * - Filtra visualmente quem é de "São Paulo - Mogi das Cruzes" NA LISTAGEM.
- * - Acessa detalhes (pessoaeditar.php) APENAS dos filtrados para validar Cargo e Status.
- * * 2. Gerador em Background (Iframe Oculto):
- * - Cria um IFRAME invisível carregando 'gerenciarponto.php'.
- * - Injeta os filtros (Data, Colaborador) e dispara a busca via script.
- * - Intercepta o evento AJAX do sistema para saber quando a tabela carregou.
- * - Extrai os dados sem que o usuário precise sair da tela.
- * * --- CHANGELOG ---
- * [5.3.0] - Correção de sintaxe (Strict Block Scoping) para evitar erros de 'const'.
- * [5.2.0] - Implementação de Iframe para geração em background.
- * - Otimização do filtro de cidade na primeira etapa.
+ * CLUBE04 - MÓDULO PONTO (Suite Central)
+ * Versão: 10.0.0 (Drag Fix + Total Reset + Stable)
  */
-
 (function () {
-    'use strict';
+    "use strict";
 
-    // Se o painel já existir, apenas mostra e para a execução
-    if (document.getElementById('dr-painel')) {
-        document.getElementById('dr-painel').style.display = 'block';
-        return;
-    }
-
-    // LISTENER DO HUB
-    window.addEventListener('c04_open_ponto', () => {
-        const p = document.getElementById('dr-painel');
-        if (p) {
-            p.style.display = 'block';
-        } else {
-            initPonto();
-        }
-    });
-    
     // --- CONFIGURAÇÕES ---
-    const UNIDADE_ALVO = "São Paulo - Mogi das Cruzes";
-    // Cargos permitidos (Case sensitive parcial)
-    const CARGOS_ALVO = ["Cuidador", "Tosador", "Consultor"]; 
-    
-    // URLs do sistema
-    const URL_LISTAGEM = 'https://clube04.com.br/digital/pessoa.php';
-    const URL_DETALHE = 'https://clube04.com.br/digital/pessoaeditar.php';
-    const URL_RELATORIO = 'https://clube04.com.br/digital/gerenciarponto.php';
+    const CONFIG = {
+        domain: 'clube04.com.br',
+        urlAlvo: 'https://clube04.com.br/digital/gerenciarponto.php',
+        urlInserir: './GerenciarPonto/GerenciarPontoI001.php',
+        urlExcluir: './GerenciarPonto/GerenciarPontoE001.php',
+        targetRequest: 'GerenciarPontoN002.php',
+        urlJSZip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+    };
 
-    let listaColaboradoresCache = [];
+    // --- ESTADO ---
+    const State = {
+        iframe: null,
+        processando: false,
+        dadosCache: [],
+        editandoAgora: null,
+        currentIndex: -1
+    };
 
-    // --- HELPER: AJAX & FETCH ---
+    // --- UTILS ---
+    const Utils = {
+        toast: (msg, tipo = 'info') => {
+            const t = document.getElementById('c04-toast');
+            if (t) {
+                t.innerText = msg;
+                t.style.background = tipo === 'error' ? '#ef4444' : (tipo === 'success' ? '#10b981' : '#334155');
+                t.classList.add('show');
+                setTimeout(() => t.classList.remove('show'), 2000);
+            }
+        },
+        createIframe: (url) => {
+            return new Promise((resolve) => {
+                const ifr = document.createElement('iframe');
+                // Estilos para evitar erros de renderização visual no sistema legado
+                ifr.style.width = '1024px'; ifr.style.height = '768px';
+                ifr.style.position = 'fixed'; ifr.style.top = '-9999px'; ifr.style.left = '-9999px';
+                ifr.style.visibility = 'visible';
+                ifr.src = url;
+                ifr.onload = () => resolve(ifr);
+                document.body.appendChild(ifr);
+            });
+        },
+        sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+        waitForSpecificUrl: (win, partialUrl) => {
+            return new Promise((resolve) => {
+                if (!win.$) { setTimeout(resolve, 1500); return; }
+                let resolved = false;
+                const timeout = setTimeout(() => { if(!resolved) { resolved=true; resolve(); } }, 15000);
+                const handler = (event, xhr, settings) => {
+                    if (settings && settings.url && settings.url.includes(partialUrl)) {
+                        clearTimeout(timeout);
+                        win.$(win.document).off("ajaxComplete", handler);
+                        resolved = true;
+                        setTimeout(resolve, 300);
+                    }
+                };
+                win.$(win.document).on("ajaxComplete", handler);
+            });
+        },
+        timeToMin: (t) => { if (!t || !t.includes(':')) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; },
+        getDataInfo: (str) => {
+            if (!str) return { data: "-", dia: "-", iso: "" };
+            const cleanStr = str.replace(/(\r\n|\n|\r)/gm, "").trim();
+            const match = cleanStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            if (!match) return { data: cleanStr, dia: "-", iso: "" };
+            const [_, d, m, y] = match;
+            const dateObj = new Date(`${y}-${m}-${d}T12:00:00`);
+            const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+            return { data: `${d}/${m}/${y}`, dia: dias[dateObj.getDay()], iso: `${y}-${m}-${d}`, obj: dateObj };
+        },
+        copyText: (text) => { navigator.clipboard.writeText(text).then(() => Utils.toast("Copiado!", "success")); }
+    };
 
-    async function fetchTexto(url, formData = null) {
-        const options = formData ? { method: 'POST', body: formData } : { method: 'GET' };
-        try {
-            const resp = await fetch(url, options);
-            const buffer = await resp.arrayBuffer();
-            return new TextDecoder("iso-8859-1").decode(buffer);
-        } catch (e) {
-            console.error("Erro no fetch:", url, e);
-            return "";
-        }
-    }
+    // --- CSS ---
+    const STYLES_CSS = `
+        #c04-ponto-painel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 500px; max-height: 90vh; background: #fff; border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); z-index: 999999; display: flex; flex-direction: column; font-family: 'Segoe UI', sans-serif; border: 1px solid #ccc; overflow: hidden; transition: width 0.3s ease; }
+        #c04-ponto-painel.expanded { width: 1000px; max-width: 95vw; }
+        #c04-header { background: #064e3b; color: #fff; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; cursor: grab; }
+        #c04-header:active { cursor: grabbing; }
+        #c04-header h3 { margin: 0; font-size: 15px; font-weight: 600; text-transform: uppercase; }
+        #c04-close { cursor: pointer; font-size: 20px; font-weight: bold; opacity: 0.8; }
+        #c04-body { padding: 15px; overflow-y: auto; background: #f8f9fa; display: flex; flex-direction: column; gap: 15px; position: relative; }
+        .c04-row { display: flex; gap: 10px; } .c04-col { flex: 1; }
+        .c04-label { font-size: 11px; font-weight: 700; color: #555; text-transform: uppercase; margin-bottom: 5px; display: block; }
+        .c04-input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 13px; }
+        .c04-list-container { border: 1px solid #ddd; background: #fff; border-radius: 4px; overflow: hidden; }
+        .c04-search-box { padding: 8px; border-bottom: 1px solid #eee; background: #f1f1f1; display:flex; align-items:center; gap:10px; }
+        .c04-search-input { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px; flex:1; }
+        .c04-scroll-area { max-height: 120px; overflow-y: auto; padding: 5px; outline: none; }
+        .c04-check-item { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px; cursor: pointer; border: 1px solid transparent; }
+        .c04-check-item:hover { background: #e9ecef; }
+        .c04-check-item:focus { background: #e0f2fe; border-color: #3b82f6; outline: none; }
+        .c04-btn { padding: 10px; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; color: white; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+        .c04-btn-primary { background: #10b981; } .c04-btn-primary:hover { background: #059669; }
+        .c04-btn-success { background: #2563eb; display: none; }
+        .c04-btn-danger { background: #ef4444; color:white; width: auto; font-size: 10px; padding: 2px 8px; height: 24px; margin-top:2px; }
+        .c04-btn-edit { background: #f39c12; width: 24px; height: 24px; padding: 0; border-radius: 4px; font-size: 14px; }
+        .c04-btn-del-mini { background: #e74c3c; width: 24px; height: 24px; padding: 0; border-radius: 4px; font-size: 14px; color:white; border:none; cursor:pointer; }
+        .c04-btn-copy-mini { background: #f59e0b; border:none; border-radius:3px; cursor:pointer; font-size:10px; padding: 4px 10px; color:white; display:block; margin: 0 auto; }
+        #c04-results-wrapper { display: none; margin-top: 15px; border-top: 2px solid #ddd; padding-top: 15px; }
+        .c04-card-res { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; margin-bottom: 15px; }
+        .c04-res-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px; }
+        .c04-table { width: 100%; border-collapse: collapse; font-size: 11px; text-align: center; }
+        .c04-table th { background: #f8f9fa; padding: 6px; border: 1px solid #eee; color: #666; white-space: nowrap; vertical-align: middle; }
+        .c04-table td { padding: 5px; border: 1px solid #eee; color: #333; }
+        .c04-error-row { background: #fff5f5; }
+        .c04-time-entry { color: #16a34a; font-weight: bold; }
+        .c04-time-exit { color: #dc2626; font-weight: bold; }
+        .c04-tag { background: #e74c3c; color: white; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin: 1px; display:inline-block;}
+        #c04-editor-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; backdrop-filter: blur(2px); }
+        .c04-editor-box { width: 100%; max-width: 420px; background: #fff; border: 1px solid #ccc; box-shadow: 0 10px 30px rgba(0,0,0,0.2); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; max-height: 90vh; }
+        .c04-editor-header { background: #f39c12; color: white; padding: 10px; font-weight: bold; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+        .c04-editor-nav { display: flex; gap: 5px; }
+        .c04-nav-btn { background: rgba(255,255,255,0.2); border: none; color: white; cursor: pointer; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+        .c04-nav-btn:hover { background: rgba(255,255,255,0.4); }
+        .c04-editor-body { padding: 15px; overflow-y: auto; }
+        .c04-time-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #eee; }
+        .c04-time-input { flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-weight: bold; font-family: monospace; }
+        .c04-btn-del { background: #e74c3c; color: white; border: none; width: 30px; height: 30px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .c04-add-area { background: #f0fdf4; border: 1px dashed #16a34a; padding: 10px; border-radius: 6px; margin-top: 15px; }
+        .c04-add-row { display: flex; gap: 5px; margin-top: 5px; }
+        .c04-select-type { padding: 5px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        #c04-toast { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 1000000; }
+        #c04-toast.show { opacity: 1; bottom: 40px; }
+    `;
 
-    // Cria um Iframe oculto para processamento em background
-    async function createIframe(url) {
-        const ifr = document.createElement('iframe');
-        ifr.style.display = "none";
-        ifr.style.width = "1024px"; 
-        ifr.style.height = "768px";
-        ifr.src = url;
-        document.body.appendChild(ifr);
+    // --- INICIALIZAÇÃO ---
+    function initModule() {
+        if (document.getElementById('c04-ponto-painel')) { document.getElementById('c04-ponto-painel').style.display = 'flex'; return; }
+        if (!window.location.hostname.includes(CONFIG.domain)) return alert("Use no sistema Clube04.");
+
+        const style = document.createElement('style'); style.textContent = STYLES_CSS; document.head.appendChild(style);
+        const div = document.createElement('div'); div.id = 'c04-ponto-painel';
         
-        return new Promise(resolve => {
-            ifr.onload = () => resolve(ifr);
-        });
-    }
-
-    // Hook para esperar o AJAX do jQuery terminar dentro do Iframe
-    function searchWithAjaxHook(ifr, btnSelector) {
-        return new Promise((resolve, reject) => {
-            const win = ifr.contentWindow;
-            const doc = ifr.contentDocument;
-
-            if (!win.$) { 
-                reject("jQuery não carregado no destino."); 
-                return; 
-            }
-
-            const timeoutId = setTimeout(() => { 
-                console.warn("Timeout AJAX Hook - Tentando ler tabela mesmo assim...");
-                resolve(); 
-            }, 10000);
-
-            const hook = (event, xhr, settings) => {
-                if (settings && settings.url && settings.url.includes('gerenciarponto')) {
-                    win.$(doc).off("ajaxComplete", hook); 
-                    clearTimeout(timeoutId);
-                    setTimeout(resolve, 500); // Delay para renderização DOM
-                }
-            };
-            
-            win.$(doc).on("ajaxComplete", hook);
-            
-            const btn = doc.querySelector(btnSelector);
-            if (btn) {
-                btn.click();
-            } else {
-                reject("Botão de busca não encontrado no iframe.");
-            }
-        });
-    }
-
-    // --- ETAPA 1: CRAWLER DE PESSOAS ---
-
-    async function carregarListaColaboradores() {
-        const areaStatus = document.getElementById('dr-status-loading');
-        areaStatus.innerHTML = '⏳ 1/2: Filtrando Unidade na Listagem Geral...';
-        areaStatus.style.display = 'block';
-        document.getElementById('dr-colaboradores-lista').innerHTML = '';
-
-        // 1. Busca Listagem Geral
-        const htmlPessoa = await fetchTexto(URL_LISTAGEM);
-        const doc = new DOMParser().parseFromString(htmlPessoa, 'text/html');
-        const linhas = doc.querySelectorAll('#idTabelaPessoa tbody tr');
-
-        let candidatos = [];
-
-        // 2. Filtra Mogi na própria tabela (Coluna 6 / Index 5)
-        linhas.forEach(tr => {
-            const cols = tr.querySelectorAll('td');
-            if (cols.length < 6) { return; }
-
-            const colNome = cols[0];
-            const nome = colNome.innerText.trim();
-            const unidadeTexto = cols[5].innerText.trim();
-
-            // Validação de Unidade IMEDIATA
-            if (!unidadeTexto.includes(UNIDADE_ALVO)) { return; }
-
-            // Extrai ID
-            const onclick = colNome.getAttribute('onclick') || "";
-            const matchId = onclick.match(/redirecionarPessoaEditar\('(\d+)'/);
-            const id = matchId ? matchId[1] : null;
-
-            if (id) {
-                candidatos.push({ id, nome });
-            }
-        });
-
-        if (candidatos.length === 0) {
-            areaStatus.innerHTML = '⚠️ Ninguém encontrado em Mogi das Cruzes.';
-            return;
-        }
-
-        // 3. Verifica Detalhes (Cargo e Status)
-        let finais = [];
-        let count = 0;
-        
-        for (const cand of candidatos) {
-            count++;
-            areaStatus.innerHTML = `⏳ 2/2: Validando Cargos (${count}/${candidatos.length})...`;
-            
-            const fd = new FormData();
-            fd.append('idPessoa', cand.id);
-            fd.append('idTipoPessoa', '1');
-
-            try {
-                const htmlEdit = await fetchTexto(URL_DETALHE, fd);
-                const docEdit = new DOMParser().parseFromString(htmlEdit, 'text/html');
-                
-                // Status
-                const btnStatus = docEdit.querySelector('button[data-id="statusPessoa"]');
-                const statusTexto = btnStatus ? btnStatus.getAttribute('title') : "Desconhecido";
-
-                // Cargo
-                const btnCargo = docEdit.querySelector('button[data-id="idCargo"]');
-                const cargoTexto = btnCargo ? btnCargo.getAttribute('title') : "";
-
-                // Valida Cargo
-                const cargoValido = CARGOS_ALVO.some(alvo => cargoTexto.includes(alvo));
-
-                if (cargoValido) {
-                    finais.push({ ...cand, cargo: cargoTexto, status: statusTexto });
-                }
-
-            } catch (e) { 
-                console.error(e); 
-            }
-            
-            // Pequeno respiro para a CPU
-            if (count % 5 === 0) {
-                await new Promise(r => setTimeout(r, 20));
-            }
-        }
-
-        listaColaboradoresCache = finais;
-        areaStatus.style.display = 'none';
-        renderizarListaSelecao();
-    }
-
-    function renderizarListaSelecao() {
-        const listaDiv = document.getElementById('dr-colaboradores-lista');
-        const checkInativos = document.getElementById('dr-toggle-inativos').checked;
-        listaDiv.innerHTML = '';
-
-        const filtrados = listaColaboradoresCache.filter(c => checkInativos ? true : c.status === 'Ativo');
-        filtrados.sort((a,b) => a.nome.localeCompare(b.nome));
-
-        if (filtrados.length === 0) {
-            listaDiv.innerHTML = '<p style="color:#777; padding:10px;">Nenhum colaborador compatível.</p>';
-            return;
-        }
-
-        filtrados.forEach(c => {
-            const corStatus = c.status === 'Ativo' ? '#28a745' : '#dc3545';
-            const checked = c.status === 'Ativo' ? 'checked' : ''; 
-            listaDiv.innerHTML += `
-                <div class="dr-cb-item">
-                    <input type="checkbox" id="dr-cb-${c.id}" value="${c.id}" data-nome="${c.nome}" ${checked}>
-                    <label for="dr-cb-${c.id}">
-                        ${c.nome}<br>
-                        <small style="color:#666">${c.cargo} <span style="color:${corStatus}">●</span></small>
-                    </label>
-                </div>`;
-        });
-    }
-
-    // --- ETAPA 2: PROCESSAMENTO EM BACKGROUND (IFRAME) ---
-
-    async function gerarRelatorio() {
-        const checkboxes = document.querySelectorAll('#dr-colaboradores-lista input[type="checkbox"]:checked');
-        if (checkboxes.length === 0) {
-            alert('Selecione pelo menos um colaborador.');
-            return;
-        }
-
-        const mesInicio = document.getElementById('dr-mes-inicio').value;
-        const mesFim = document.getElementById('dr-mes-fim').value;
-        const resultDiv = document.getElementById('dr-resultados');
-        const btnGerar = document.getElementById('dr-gerar');
-        
-        // Bloqueia UI
-        btnGerar.disabled = true;
-        resultDiv.innerHTML = '<div style="padding:20px; text-align:center;"><div class="loader"></div><p>Inicializando Iframe em Background...</p></div>';
-
-        // 1. Cria Iframe Único para a Sessão
-        let ifr;
-        try {
-             ifr = await createIframe(URL_RELATORIO);
-        } catch (e) {
-            btnGerar.disabled = false;
-            resultDiv.innerHTML = '<p style="color:red">Erro ao carregar página de ponto.</p>';
-            return;
-        }
-
-        const listaMeses = [];
-        let atual = new Date(mesInicio + '-02');
-        const fim = new Date(mesFim + '-02');
-        while (atual <= fim) {
-            listaMeses.push(atual.toISOString().slice(0, 7));
-            atual.setMonth(atual.getMonth() + 1);
-        }
-
-        let dadosExportacao = []; 
-        let totalPassos = checkboxes.length * listaMeses.length;
-        let passoAtual = 0;
-
-        // Loop de processamento
-        for (const cb of checkboxes) {
-            const idColab = cb.value;
-            const nomeColab = cb.getAttribute('data-nome');
-
-            for (const mes of listaMeses) {
-                passoAtual++;
-                resultDiv.innerHTML = `<div style="padding:20px; text-align:center;"><div class="loader"></div><p>Processando ${passoAtual}/${totalPassos}<br><b>${nomeColab}</b> (${mes})</p></div>`;
-
-                const doc = ifr.contentDocument;
-                const win = ifr.contentWindow;
-
-                // Define Datas
-                const dt = new Date(mes + '-01'); 
-                const lastDay = new Date(dt.getFullYear(), dt.getMonth()+1, 0).getDate();
-                
-                // Injeta Valores no Iframe
-                const elIni = doc.getElementById('dataInicioBusca');
-                const elFim = doc.getElementById('dataFimBusca');
-                
-                if (elIni) { elIni.value = mes + '-01'; }
-                if (elFim) { elFim.value = mes + '-' + lastDay; }
-
-                // Seleciona Colaborador (Bootstrap Select)
-                const select = doc.getElementById('idColaboradorBusca');
-                if (win.$ && select) {
-                    win.$(select).val(idColab).selectpicker('refresh');
-                } else if (select) {
-                    select.value = idColab;
-                }
-
-                // Dispara Busca e Aguarda
-                try {
-                    await searchWithAjaxHook(ifr, '#buttonbuscarPontos');
-                } catch (err) {
-                    console.warn("Erro no hook AJAX, tentando continuar:", err);
-                }
-
-                // Extrai Dados da Tabela do Iframe
-                const rows = doc.querySelectorAll('#idTabelaPontos tbody tr');
-                rows.forEach(r => {
-                    const tds = r.querySelectorAll('td');
-                    if (tds.length < 3) { return; }
-                    
-                    const dataTxt = tds[0].innerText.trim();
-                    if (!dataTxt || dataTxt.includes("Nenhum")) { return; }
-
-                    const inputs = r.querySelectorAll('input[type="time"]');
-                    const horarios = Array.from(inputs).map(i => i.value).filter(v=>v);
-                    
-                    const totalMatch = tds[2].innerText.match(/Horas Trabalhadas: ([\d:]+)/);
-                    const total = totalMatch ? totalMatch[1] : '00:00';
-                    
-                    let alertas = [];
-                    if (horarios.length % 2 !== 0) { alertas.push("Marcação Ímpar"); }
-                    if (horarios.length === 0) { alertas.push("Sem Marcação"); }
-
-                    dadosExportacao.push({
-                        colaborador: nomeColab,
-                        mes: mes,
-                        data: dataTxt,
-                        e1: horarios[0] || '', s1: horarios[1] || '',
-                        e2: horarios[2] || '', s2: horarios[3] || '',
-                        e3: horarios[4] || '', s3: horarios[5] || '',
-                        total: total,
-                        alertas: alertas.join(', ')
-                    });
-                });
-            }
-        }
-        
-        // Limpeza
-        ifr.remove();
-        btnGerar.disabled = false;
-        renderizarResultadosFinais(dadosExportacao);
-    }
-
-    function renderizarResultadosFinais(dados) {
-        const div = document.getElementById('dr-resultados');
-        if (dados.length === 0) {
-            div.innerHTML = '<p style="text-align:center; color:red;">Nenhum registro encontrado.</p>';
-            return;
-        }
-
-        let csv = "Colaborador;Mes;Data;Entrada 1;Saida 1;Entrada 2;Saida 2;Entrada 3;Saida 3;Total Horas;Alertas\n";
-        dados.forEach(d => {
-            csv += `${d.colaborador};${d.mes};${d.data};${d.e1};${d.s1};${d.e2};${d.s2};${d.e3};${d.s3};${d.total};${d.alertas}\n`;
-        });
-
         div.innerHTML = `
-            <div style="text-align:center; padding:15px; background:#f0fdf4; border:1px solid #10b981; border-radius:8px;">
-                <h3 style="color:#065f46; margin:0 0 10px 0;">Sucesso!</h3>
-                <p>Processados <strong>${dados.length}</strong> dias de ponto.</p>
-                <button id="btn-dl-csv" class="dr-btn dr-btn-success" style="font-size:16px;">📥 Baixar CSV</button>
+            <div id="c04-header"><h3>🕒 Auditoria & Edição (v10.0)</h3><span id="c04-close">×</span></div>
+            <div id="c04-body">
+                <div class="c04-row">
+                    <div class="c04-col"><label class="c04-label">Mês Início</label><input type="month" id="c04-ini" class="c04-input"></div>
+                    <div class="c04-col"><label class="c04-label">Mês Fim</label><input type="month" id="c04-fim" class="c04-input"></div>
+                </div>
+                <div>
+                    <label class="c04-label">Colaboradores</label>
+                    <div class="c04-list-container">
+                        <div class="c04-search-box">
+                            <input type="text" id="c04-search-list" class="c04-search-input" placeholder="🔍 Filtrar ou Enter para selecionar...">
+                            <button class="c04-btn c04-btn-danger" id="c04-clear-list">Limpar</button>
+                        </div>
+                        <div class="c04-scroll-area" id="c04-list-items" tabindex="0"><div style="padding:10px;color:#999;">Carregando...</div></div>
+                    </div>
+                </div>
+                <div id="c04-status-text">Pronto.</div>
+                <button id="c04-btn-run" class="c04-btn c04-btn-primary">BUSCAR DADOS</button>
+                <button id="c04-btn-zip" class="c04-btn c04-btn-success">💾 BAIXAR ZIP</button>
+                <div id="c04-results-wrapper"></div>
+                
+                <div id="c04-editor-overlay">
+                    <div class="c04-editor-box">
+                        <div class="c04-editor-header">
+                            <div class="c04-editor-nav">
+                                <button class="c04-nav-btn" id="c04-prev-day" title="Anterior (Shift+<)"> &lt; </button>
+                                <span id="c04-ed-title">Editar</span>
+                                <button class="c04-nav-btn" id="c04-next-day" title="Próximo (Shift+>)"> &gt; </button>
+                            </div>
+                            <span style="cursor:pointer; margin-left:10px;" id="c04-ed-close" title="Fechar (Esc)">×</span>
+                        </div>
+                        <div class="c04-editor-body" id="c04-ed-content"></div>
+                    </div>
+                </div>
             </div>
+            <div id="c04-toast"></div>
         `;
+        document.body.appendChild(div);
 
-        document.getElementById('btn-dl-csv').onclick = () => {
-            const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            link.download = `Ponto_Mogi_${new Date().toISOString().slice(0,10)}.csv`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        setupEvents(div);
+        carregarColaboradores();
+        
+        const m = new Date(); m.setMonth(m.getMonth()-1); 
+        const iso = m.toISOString().slice(0,7);
+        document.getElementById('c04-ini').value = iso; document.getElementById('c04-fim').value = iso;
+    }
+
+    // --- CARGA DE COLABORADORES ---
+    async function carregarColaboradores() {
+        const listArea = document.getElementById('c04-list-items');
+        let options = [];
+        const localSel = document.getElementById('idColaboradorBusca');
+        
+        if (localSel) {
+            options = Array.from(localSel.querySelectorAll('option')).filter(o=>o.value).map(o=>({id:o.value, nome:o.textContent.trim()}));
+        } else {
+            try {
+                const ifr = await Utils.createIframe(CONFIG.urlAlvo);
+                const doc = ifr.contentDocument;
+                const rSel = doc.getElementById('idColaboradorBusca');
+                if(rSel) options = Array.from(rSel.querySelectorAll('option')).filter(o=>o.value).map(o=>({id:o.value, nome:o.textContent.trim()}));
+                ifr.remove();
+            } catch(e) {}
+        }
+
+        if(options.length === 0) { listArea.innerHTML = "Erro: Lista vazia."; return; }
+
+        listArea.innerHTML = `<div class="c04-check-item" style="font-weight:bold; border-bottom:1px solid #eee;"><input type="checkbox" id="c04-check-all"> Selecionar Visíveis</div>`;
+        
+        options.forEach(opt => {
+            const item = document.createElement('div'); 
+            item.className = `c04-check-item c04-colab-row`;
+            item.tabIndex = -1;
+            item.innerHTML = `<input type="checkbox" class="c04-cb-colab" value="${opt.id}" data-nome="${opt.nome}"> <span>${opt.nome}</span>`;
+            item.onclick = (e) => { 
+                if(e.target.tagName !== 'INPUT') { const cb=item.querySelector('input'); cb.checked=!cb.checked; }
+                document.getElementById('c04-search-list').value = '';
+                document.getElementById('c04-search-list').dispatchEvent(new Event('input'));
+                document.getElementById('c04-search-list').focus();
+            };
+            item.onkeydown = (e) => {
+                if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.click(); } 
+                else if(e.key === 'ArrowDown') { e.preventDefault(); if(item.nextElementSibling) item.nextElementSibling.focus(); } 
+                else if(e.key === 'ArrowUp') { e.preventDefault(); if(item.previousElementSibling && item.previousElementSibling.className.includes('c04-check-item')) item.previousElementSibling.focus(); else document.getElementById('c04-search-list').focus(); }
+            };
+            listArea.appendChild(item);
+        });
+
+        document.getElementById('c04-check-all').onchange = (e) => {
+             document.querySelectorAll('.c04-colab-row').forEach(r => { if(r.style.display!=='none') r.querySelector('input').checked = e.target.checked; });
         };
     }
 
-    // --- INTERFACE (UI) ---
-    function initPonto() {
-        const style = `
-            #dr-painel { display:block; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:600px; max-width:95vw; max-height:90vh; background:white; border-radius:12px; box-shadow:0 15px 50px rgba(0,0,0,0.4); z-index:100000; font-family:'Segoe UI', sans-serif; display:flex; flex-direction:column; overflow:hidden; border:1px solid #e5e7eb; }
-            #dr-header { padding:15px 20px; background:#10b981; color:white; display:flex; justify-content:space-between; align-items:center; font-weight:bold; }
-            #dr-close { cursor:pointer; font-size:24px; opacity:0.8; transition:0.2s; } #dr-close:hover { opacity:1; }
-            #dr-body { padding:20px; overflow-y:auto; flex:1; background:#f9fafb; }
-            .dr-filtros-row { display:flex; gap:15px; margin-bottom:15px; padding:15px; background:white; border-radius:8px; border:1px solid #e5e7eb; align-items:flex-end; }
-            .dr-filtros-row label { display:block; font-size:12px; color:#4b5563; margin-bottom:4px; font-weight:600; }
-            .dr-filtros-row input[type="month"] { border:1px solid #d1d5db; padding:6px; border-radius:4px; width:100%; }
-            .dr-colab-box { max-height:250px; overflow-y:auto; background:white; border:1px solid #d1d5db; border-radius:6px; padding:0; margin-bottom:20px; }
-            .dr-cb-item { border-bottom:1px solid #f3f4f6; padding:8px 12px; display:flex; gap:10px; align-items:center; }
-            .dr-cb-item:hover { background:#f0fdf4; }
-            .dr-cb-item label { font-size:14px; color:#1f2937; cursor:pointer; width:100%; }
-            .dr-btn { padding:10px 20px; border:none; border-radius:6px; color:white; cursor:pointer; font-weight:600; transition:0.2s; }
-            .dr-btn:hover { filter:brightness(110%); }
-            .dr-btn-primary { background:#2563eb; width:100%; }
-            .dr-btn-success { background:#10b981; }
-            .dr-btn:disabled { background:#ccc; cursor:not-allowed; }
-            #dr-status-loading { color:#d97706; font-size:13px; font-weight:600; margin-bottom:10px; padding:10px; background:#fffbeb; border-radius:6px; display:none; }
-            .loader { border: 4px solid #f3f3f3; border-top: 4px solid #10b981; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px auto; }
-            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        `;
-        const styleTag = document.createElement('style'); styleTag.innerHTML = style; document.head.appendChild(styleTag);
+    function setupEvents(painel) {
+        document.getElementById('c04-close').onclick = () => painel.style.display = 'none';
+        document.getElementById('c04-ed-close').onclick = fecharEditor;
+        
+        const searchInput = document.getElementById('c04-search-list');
+        const listArea = document.getElementById('c04-list-items');
 
-        const hoje = new Date();
-        hoje.setMonth(hoje.getMonth() - 1);
-        const mesPadrao = hoje.toISOString().slice(0,7);
+        searchInput.oninput = (e) => {
+            const t = e.target.value.toLowerCase();
+            document.querySelectorAll('.c04-colab-row').forEach(r => {
+                const span = r.querySelector('span');
+                r.style.display = span.innerText.toLowerCase().includes(t) ? 'flex' : 'none';
+            });
+        };
+
+        searchInput.onkeydown = (e) => {
+            if(e.key === 'ArrowDown') {
+                e.preventDefault();
+                const first = listArea.querySelector('.c04-colab-row:not([style*="none"])');
+                if(first) first.focus();
+            } else if(e.key === 'Enter') {
+                e.preventDefault();
+                if(searchInput.value.trim() === '') document.getElementById('c04-btn-run').click();
+                else {
+                    const first = listArea.querySelector('.c04-colab-row:not([style*="none"])');
+                    if(first) first.click();
+                }
+            }
+        };
+
+        // --- RESET COMPLETO (Correção) ---
+        document.getElementById('c04-clear-list').onclick = () => {
+            document.querySelectorAll('.c04-cb-colab').forEach(cb => cb.checked = false);
+            document.getElementById('c04-check-all').checked = false;
+            document.getElementById('c04-search-list').value = '';
+            document.getElementById('c04-search-list').dispatchEvent(new Event('input'));
+            
+            // Limpa Resultados e Reseta Tamanho
+            document.getElementById('c04-results-wrapper').style.display = 'none';
+            document.getElementById('c04-results-wrapper').innerHTML = '';
+            painel.classList.remove('expanded');
+            State.dadosCache = [];
+            document.getElementById('c04-btn-zip').style.display = 'none';
+            document.getElementById('c04-status-text').innerText = "Pronto.";
+            
+            Utils.toast("Reset completo");
+        };
+
+        // --- ARRASTAR (Correção) ---
+        const header = document.getElementById('c04-header');
+        let isDragging = false;
+        let dragOffset = [0, 0];
+
+        header.onmousedown = (e) => {
+            e.preventDefault();
+            isDragging = true;
+            // IMPORTANTE: Remove o transform centralizado e fixa a posição absoluta atual
+            const rect = painel.getBoundingClientRect();
+            painel.style.transform = 'none';
+            painel.style.left = rect.left + 'px';
+            painel.style.top = rect.top + 'px';
+            
+            // Calcula o offset do mouse em relação ao canto do painel
+            dragOffset = [
+                e.clientX - rect.left,
+                e.clientY - rect.top
+            ];
+        };
+
+        document.onmouseup = () => isDragging = false;
+        document.onmousemove = (e) => {
+            if (isDragging) {
+                e.preventDefault();
+                painel.style.left = (e.clientX - dragOffset[0]) + 'px';
+                painel.style.top = (e.clientY - dragOffset[1]) + 'px';
+            }
+        };
+
+        // Atalhos do Modal
+        document.getElementById('c04-prev-day').onclick = () => navegarDia(-1);
+        document.getElementById('c04-next-day').onclick = () => navegarDia(1);
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('c04-editor-overlay').style.display === 'flex') {
+                if (e.key === 'Escape') { e.preventDefault(); fecharEditor(); } 
+                else if (e.shiftKey) {
+                    if (e.key === 'ArrowLeft' || e.key === ',') { e.preventDefault(); navegarDia(-1); }
+                    if (e.key === 'ArrowRight' || e.key === '.') { e.preventDefault(); navegarDia(1); }
+                }
+            }
+        });
+
+        document.getElementById('c04-btn-run').onclick = runProcess;
+    }
+
+    // --- PROCESSAMENTO ---
+    async function runProcess() {
+        const cbs = Array.from(document.querySelectorAll('.c04-cb-colab:checked'));
+        if(cbs.length===0) return Utils.toast("Selecione um colaborador.", "error");
+
+        const painel = document.getElementById('c04-ponto-painel');
+        const resWrapper = document.getElementById('c04-results-wrapper');
+        painel.classList.add('expanded');
+        resWrapper.style.display = 'block';
+        resWrapper.innerHTML = '';
+        document.getElementById('c04-btn-zip').style.display = 'none';
+        
+        State.processando = true;
+        State.dadosCache = [];
+        
+        try {
+            if(State.iframe) State.iframe.remove();
+            State.iframe = await Utils.createIframe(CONFIG.urlAlvo);
+            const win = State.iframe.contentWindow; const doc = State.iframe.contentDocument;
+
+            const meses = gerarMeses(document.getElementById('c04-ini').value, document.getElementById('c04-fim').value);
+            
+            for(const mes of meses) {
+                for(const cb of cbs) {
+                    if(!State.processando) break;
+                    document.getElementById('c04-status-text').innerText = `Lendo: ${cb.dataset.nome} (${mes})`;
+                    
+                    if(doc.getElementById('mesBusca')) doc.getElementById('mesBusca').value = mes;
+                    const selectEl = doc.getElementById('idColaboradorBusca');
+                    if(selectEl) {
+                        selectEl.value = cb.value;
+                        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        try { if(win.$ && win.$.fn.selectpicker) { win.$(selectEl).selectpicker('refresh'); } } catch(e) {}
+                    }
+                    await Utils.sleep(100);
+                    const promiseRede = Utils.waitForSpecificUrl(win, CONFIG.targetRequest);
+                    const btn = doc.getElementById('buttonbuscarPontos');
+                    
+                    if(btn) {
+                        btn.click();
+                        await promiseRede;
+                        const idUnidade = doc.getElementById('idUnidadeBuscaImprimir') ? doc.getElementById('idUnidadeBuscaImprimir').value : '26';
+                        const resultados = extrairDados(doc, {id: cb.value, nome: cb.dataset.nome}, mes, idUnidade);
+                        
+                        if(resultados.length) {
+                            State.dadosCache.push(...resultados);
+                            renderCard({id: cb.value, nome: cb.dataset.nome}, mes, resultados, resWrapper);
+                        }
+                    }
+                }
+            }
+            document.getElementById('c04-status-text').innerText = "Concluído.";
+            if(State.dadosCache.length) {
+                document.getElementById('c04-btn-zip').style.display = 'flex';
+                document.getElementById('c04-btn-zip').onclick = () => gerarZip(State.dadosCache);
+            } else {
+                resWrapper.innerHTML = '<div style="padding:20px; text-align:center;">Nenhum dado encontrado.</div>';
+            }
+        } catch(e) { console.error(e); Utils.toast("Erro: " + e.message, "error"); } finally { State.processando = false; }
+    }
+
+    function extrairDados(doc, colab, mesRef, idUnidade) {
+        const tabela = doc.getElementById('idTabelaPontos');
+        if(!tabela) return [];
+        const dados = [];
+        const linhas = tabela.querySelectorAll('tbody tr');
+        linhas.forEach((tr) => {
+            const dataTxt = tr.cells[0].innerText;
+            const {data, dia, iso} = Utils.getDataInfo(dataTxt);
+            if(data==='-' || !iso) return;
+            
+            const inputs = Array.from(tr.cells[1].querySelectorAll('input[type="time"]'));
+            const horariosFull = inputs.map(i => ({ id: i.id.replace('horarioPonto_', ''), val: i.value })).filter(h => h.val);
+            const total = tr.cells[2].innerText.match(/Horas Trabalhadas:\s*([\d:]+)/)?.[1] || "00:00";
+            const validacoes = validar(horariosFull.map(h=>h.val), total, dia);
+            
+            dados.push({ colabId: colab.id, colabNome: colab.nome, idUnidade, data, dia, iso, horariosFull, total, validacoes, mesRef });
+        });
+        return dados;
+    }
+
+    function validar(horarios, total, dia) {
+        const erros = [];
+        if(horarios.length===0) return [];
+        if(horarios.length%2!==0) erros.push("Ímpar");
+        for(let i=1;i<horarios.length;i++) if(Utils.timeToMin(horarios[i])-Utils.timeToMin(horarios[i-1])<15) erros.push("Interv < 15m");
+        const m = Utils.timeToMin(total);
+        if(dia!=='Domingo' && m>0) {
+            if(m<360) erros.push("< 6 Horas");
+            if(m>(dia==='Sábado'?540:570)) erros.push("Hora Extra++");
+        }
+        return erros;
+    }
+
+    // --- RENDERIZADOR ---
+    function renderCard(colab, mes, dados, container) {
+        let maxB = 0; dados.forEach(d=> maxB = Math.max(maxB, d.horariosFull.length));
+        if(maxB<2) maxB=2; if(maxB%2!==0) maxB++;
+        
+        let headersTop = `<th colspan="3"></th>`;
+        let headersBot = `<th width="60">Ações</th><th>Data</th><th>Dia</th>`;
+        
+        for(let i=1; i<=maxB; i++) {
+            headersTop += `<th></th>`;
+            headersBot += `<th>H${i}</th>`;
+        }
+        headersTop += `<th style="text-align:center"><button class="c04-btn-copy-mini" title="Copiar Coluna">📋 Copiar</button></th><th></th>`;
+        headersBot += `<th>Total</th><th>Status</th>`;
+
+        const cardId = `card-${colab.id}-${mes}`;
+        const existing = document.getElementById(cardId);
+        if(existing) existing.remove();
 
         const html = `
-            <div id="dr-painel">
-                <div id="dr-header"><span>🕒 Relatório de Ponto v5.3</span><span id="dr-close">&times;</span></div>
-                <div id="dr-body">
-                    <div class="dr-filtros-row">
-                        <div style="flex:1"><label>De:</label><input type="month" id="dr-mes-inicio" value="${mesPadrao}"></div>
-                        <div style="flex:1"><label>Até:</label><input type="month" id="dr-mes-fim" value="${mesPadrao}"></div>
-                    </div>
-                    
-                    <div id="dr-status-loading"></div>
-
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                        <label style="font-weight:bold; font-size:13px; color:#374151;">Colaboradores (Mogi das Cruzes)</label>
-                        <div style="font-size:12px;">
-                            <input type="checkbox" id="dr-toggle-inativos"> <label for="dr-toggle-inativos" style="cursor:pointer">Mostrar Inativos</label>
-                        </div>
-                    </div>
-
-                    <div class="dr-colab-box">
-                        <div id="dr-colaboradores-lista" style="padding:10px; text-align:center; color:#9ca3af;">Inicializando Crawler...</div>
-                    </div>
-
-                    <button id="dr-gerar" class="dr-btn dr-btn-primary">Gerar Relatório</button>
-                    
-                    <div id="dr-resultados" style="margin-top:20px;"></div>
+            <div class="c04-card-res" id="${cardId}">
+                <div class="c04-res-header">
+                    <div><b>${colab.nome}</b> (${mes})</div>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="c04-table" data-maxb="${maxB}">
+                        <thead><tr style="height:10px;">${headersTop}</tr><tr>${headersBot}</tr></thead>
+                        <tbody>${dados.map((d, index) => buildRowHTML(d, maxB, index)).join('')}</tbody>
+                    </table>
                 </div>
             </div>
         `;
-        document.body.insertAdjacentHTML('beforeend', html);
+        
+        const tempDiv = document.createElement('div'); tempDiv.innerHTML = html;
+        const finalCard = tempDiv.firstElementChild;
+        container.appendChild(finalCard);
+        
+        // Binds
+        finalCard.querySelectorAll('.c04-btn-edit').forEach(btn => {
+            btn.onclick = () => {
+                const obj = JSON.parse(decodeURIComponent(btn.dataset.json));
+                const realIndex = State.dadosCache.findIndex(x => x.colabId == obj.colabId && x.iso == obj.iso);
+                abrirEditor(obj, realIndex);
+            };
+        });
+        
+        finalCard.querySelectorAll('.c04-btn-del-mini').forEach(btn => {
+            btn.onclick = () => {
+                const obj = JSON.parse(decodeURIComponent(btn.dataset.json));
+                excluirDiaInteiro(obj);
+            };
+        });
 
-        document.getElementById('dr-close').onclick = () => document.getElementById('dr-painel').style.display = 'none';
-        document.getElementById('dr-toggle-inativos').onchange = renderizarListaSelecao;
-        document.getElementById('dr-gerar').onclick = gerarRelatorio;
-
-        carregarListaColaboradores();
+        finalCard.querySelector('.c04-btn-copy-mini').onclick = () => {
+            const vals = Array.from(finalCard.querySelectorAll(`tbody tr td:nth-last-child(2) b`)).map(e => e.innerText).join('\n');
+            Utils.copyText(vals);
+        };
     }
+
+    function buildRowHTML(d, maxB, idx) {
+        let tds = '';
+        for(let i=0; i<maxB; i++) {
+            const h = d.horariosFull[i];
+            const cls = i%2===0 ? 'c04-time-entry' : 'c04-time-exit';
+            tds += `<td>${h ? `<span class="${cls}">${h.val}</span>` : '-'}</td>`;
+        }
+        const tags = d.validacoes.map(v=>`<span class="c04-tag">${v}</span>`).join('');
+        const rowClass = d.validacoes.length ? 'c04-error-row' : '';
+        const dataJson = encodeURIComponent(JSON.stringify(d));
+        
+        return `<tr class="${rowClass}" id="row-${d.colabId}-${d.iso}">
+            <td style="display:flex; gap:5px; justify-content:center;">
+                <button class="c04-btn-edit" data-json="${dataJson}" title="Editar">✏️</button>
+                <button class="c04-btn-del-mini" data-json="${dataJson}" title="Apagar Dia">🗑️</button>
+            </td>
+            <td>${d.data}</td><td>${d.dia.substring(0,3)}</td>
+            ${tds}<td><b>${d.total}</b></td><td style="text-align:left">${tags}</td>
+        </tr>`;
+    }
+
+    // --- EDITOR LOGIC ---
+    function abrirEditor(dado, index) {
+        State.editandoAgora = dado;
+        State.currentIndex = index;
+        const overlay = document.getElementById('c04-editor-overlay');
+        const content = document.getElementById('c04-ed-content');
+        
+        document.getElementById('c04-ed-title').innerText = `${dado.data} (${dado.dia})`;
+        renderConteudoEditor(content, dado);
+        overlay.style.display = 'flex';
+        
+        setTimeout(() => document.getElementById('new-time')?.focus(), 100);
+    }
+    
+    function fecharEditor() { document.getElementById('c04-editor-overlay').style.display = 'none'; }
+    
+    function navegarDia(dir) {
+        const newIdx = State.currentIndex + dir;
+        if(newIdx >= 0 && newIdx < State.dadosCache.length) {
+            const novoDado = State.dadosCache[newIdx];
+            if(novoDado.colabId === State.editandoAgora.colabId) {
+                abrirEditor(novoDado, newIdx);
+            } else {
+                Utils.toast("Fim da lista do colaborador.");
+            }
+        }
+    }
+
+    function renderConteudoEditor(container, dado) {
+        container.innerHTML = '';
+        
+        if(dado.horariosFull.length > 0) {
+            const btnClear = document.createElement('button');
+            btnClear.className = 'c04-btn c04-btn-danger';
+            btnClear.innerText = '🗑️ Limpar Dia Inteiro';
+            btnClear.style.width = '100%';
+            btnClear.style.marginBottom = '10px';
+            btnClear.onclick = () => excluirDiaInteiro(dado);
+            container.appendChild(btnClear);
+        } else {
+            container.innerHTML += '<p style="color:#999;font-size:12px;text-align:center;">Sem batidas.</p>';
+        }
+        
+        dado.horariosFull.forEach((h, i) => {
+            const row = document.createElement('div'); row.className = 'c04-time-row';
+            const color = i%2===0 ? 'green' : 'red';
+            row.innerHTML = `
+                <span style="font-size:11px; width:50px; color:${color}; font-weight:bold;">${i%2===0?'Ent':'Sai'}</span>
+                <input type="time" class="c04-time-input" value="${h.val}">
+                <button class="c04-btn-del" title="Excluir">🗑️</button>
+            `;
+            const input = row.querySelector('input');
+            input.onblur = async () => { if(input.value !== h.val) { await execIframeFunc('alterarHorarioPonto', h.id, input.value); Utils.toast("Salvo"); atualizarLinhaDados(); } };
+            
+            const btnDel = row.querySelector('button');
+            btnDel.onclick = async () => { await excluirPontoViaAjax(h.id); Utils.toast("Removido"); atualizarLinhaDados(); };
+            container.appendChild(row);
+        });
+
+        const nextType = (dado.horariosFull.length % 2 === 0) ? '1' : '2'; 
+        
+        const addDiv = document.createElement('div'); addDiv.className = 'c04-add-area';
+        addDiv.innerHTML = `
+            <div class="c04-add-row">
+                <select class="c04-select-type" id="new-type"><option value="1">Entrada</option><option value="2">Saída</option></select>
+                <input type="time" class="c04-time-input" id="new-time">
+                <button class="c04-btn c04-btn-primary" style="width:auto;" id="btn-add-ok">+</button>
+            </div>`;
+        container.appendChild(addDiv);
+        
+        document.getElementById('new-type').value = nextType;
+        const inputTime = document.getElementById('new-time');
+        const btnAdd = document.getElementById('btn-add-ok');
+
+        inputTime.onkeydown = (e) => {
+            if(e.key === 'Enter') { e.preventDefault(); btnAdd.click(); }
+        };
+
+        btnAdd.onclick = async () => {
+            const timeVal = inputTime.value;
+            const typeVal = document.getElementById('new-type').value;
+            if(!timeVal) return;
+            
+            inputTime.disabled = true;
+            await inserirPontoViaAjax(dado.colabId, dado.idUnidade, dado.iso, timeVal, typeVal);
+            await atualizarLinhaDados(); 
+        };
+    }
+
+    async function excluirDiaInteiro(dado) {
+        // Sem Confirm = Ação Direta
+        Utils.toast("Limpando...", "info");
+        const promises = dado.horariosFull.map(h => excluirPontoViaAjax(h.id));
+        await Promise.all(promises);
+        Utils.toast("Dia limpo!", "success");
+        atualizarLinhaDados();
+    }
+
+    async function atualizarLinhaDados() {
+        const doc = State.iframe.contentDocument;
+        const win = State.iframe.contentWindow;
+        const promiseRede = Utils.waitForSpecificUrl(win, CONFIG.targetRequest);
+        doc.getElementById('buttonbuscarPontos').click();
+        await promiseRede;
+
+        const novosDados = extrairDados(doc, {id: State.editandoAgora.colabId, colabNome: State.editandoAgora.colabNome}, State.editandoAgora.mesRef, State.editandoAgora.idUnidade);
+        const dadoAtualizado = novosDados.find(d => d.iso === State.editandoAgora.iso);
+        
+        if(dadoAtualizado) {
+            State.dadosCache[State.currentIndex] = dadoAtualizado;
+            State.editandoAgora = dadoAtualizado;
+            
+            if(document.getElementById('c04-editor-overlay').style.display !== 'none') {
+                renderConteudoEditor(document.getElementById('c04-ed-content'), dadoAtualizado);
+                setTimeout(() => document.getElementById('new-time')?.focus(), 100);
+            }
+            
+            const row = document.getElementById(`row-${dadoAtualizado.colabId}-${dadoAtualizado.iso}`);
+            if(row) {
+                const table = row.closest('table');
+                let maxB = parseInt(table.getAttribute('data-maxb')) || 8;
+                if (dadoAtualizado.horariosFull.length > maxB) {
+                    const thisMonthData = State.dadosCache.filter(x => x.colabId == dadoAtualizado.colabId && x.mesRef == dadoAtualizado.mesRef);
+                    renderCard({id: dadoAtualizado.colabId, nome: dadoAtualizado.colabNome}, dadoAtualizado.mesRef, thisMonthData, document.getElementById('c04-results-wrapper'));
+                } else {
+                    const newHTML = buildRowHTML(dadoAtualizado, maxB);
+                    const temp = document.createElement('tbody'); temp.innerHTML = newHTML;
+                    row.innerHTML = temp.firstElementChild.innerHTML;
+                    row.className = temp.firstElementChild.className;
+                    
+                    const newBtn = row.querySelector('.c04-btn-edit');
+                    newBtn.onclick = () => {
+                        const obj = JSON.parse(decodeURIComponent(newBtn.dataset.json));
+                        const idx = State.dadosCache.findIndex(x => x.colabId == obj.colabId && x.iso == obj.iso);
+                        abrirEditor(obj, idx);
+                    };
+                    row.querySelector('.c04-btn-del-mini').onclick = () => excluirDiaInteiro(dadoAtualizado);
+                }
+            }
+        }
+    }
+
+    // --- AJAX CALLS ---
+    function execIframeFunc(funcName, ...args) {
+        return new Promise(resolve => {
+            const win = State.iframe.contentWindow;
+            if(win && win[funcName]) { win[funcName](...args); setTimeout(resolve, 800); } 
+            else { resolve(); }
+        });
+    }
+
+    async function inserirPontoViaAjax(idPessoa, idUnidade, dataIso, hora, tipo) {
+        const win = State.iframe.contentWindow;
+        if (!win.$) return;
+        return new Promise(resolve => {
+            win.$.ajax({
+                type: "POST", url: CONFIG.urlInserir,
+                data: { tipoPonto: tipo, dataDataPonto: dataIso, timeDataPonto: hora, idPessoa: idPessoa, idUnidade: idUnidade },
+                success: function() { resolve(); },
+                error: function() { Utils.toast("Erro insert", "error"); resolve(); }
+            });
+        });
+    }
+
+    async function excluirPontoViaAjax(idPonto) {
+        const win = State.iframe.contentWindow;
+        if (!win.$) return;
+        return new Promise(resolve => {
+            win.$.ajax({
+                type: "POST", url: CONFIG.urlExcluir, data: { idPonto: idPonto },
+                success: function() { resolve(); },
+                error: function() { win.$.ajax({ type: "GET", url: CONFIG.urlExcluir + "?idPonto=" + idPonto, success: resolve, error: resolve }); }
+            });
+        });
+    }
+
+    async function gerarZip(dados) {
+        if (!window.JSZip) await new Promise(r=>{const s=document.createElement('script');s.src=CONFIG.urlJSZip;s.onload=r;document.head.appendChild(s);});
+        const zip = new JSZip(); const groups = {};
+        dados.forEach(d=>{ const k=`${d.colabNome}_${d.mesRef}`; if(!groups[k]) groups[k]=[]; groups[k].push(d); });
+        for(const [k, linhas] of Object.entries(groups)) {
+            let maxB=0; linhas.forEach(l=>{if(l.horariosFull.length>maxB) maxB=l.horariosFull.length;});
+            let h="Data;Dia;"; for(let i=1;i<=maxB;i++) h+=`Batida ${i};`; h+="Total;Obs\n";
+            let csv='\uFEFF'+h;
+            linhas.forEach(l=>{
+                const hs=l.horariosFull.map(x=>x.val); while(hs.length<maxB) hs.push("");
+                csv+=`"${l.data}";"${l.dia}";`+hs.map(x=>`"${x}"`).join(';')+`;"${l.total}";"${l.validacoes.join('|')}"\n`;
+            });
+            zip.file(`Ponto_${k}.csv`, csv);
+        }
+        const b=await zip.generateAsync({type:"blob"}); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=`Auditoria_${Date.now()}.zip`; document.body.appendChild(a); a.click(); a.remove();
+    }
+    
+    function gerarMeses(i,f){let c=new Date(i+'-02'),e=new Date(f+'-02'),l=[];while(c<=e){l.push(c.toISOString().slice(0,7));c.setMonth(c.getMonth()+1);}return l;}
+    window.addEventListener('c04_open_ponto', initModule);
 })();
