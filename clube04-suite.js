@@ -8,7 +8,7 @@
     const ENV_CONFIG = {
         LOCAL_ROOT: 'http://127.0.0.1:8080/',
         PROD_ROOT:  'https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/',
-        TIMEOUT_MS: 400
+        TIMEOUT_MS: 100
     };
 
     const LAYOUT_CONFIG = { mainColor: '#000000', accentColor: '#ff6600', suiteName: 'SUITE • CB04 • MOGI •' };
