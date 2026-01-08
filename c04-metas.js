@@ -1,7 +1,7 @@
 /**
  * CLUBE04 - MÓDULO METAS (Deep Analytics)
  * Adaptado para integração com Suite Central
- * Versão Original: 4.30.0
+ * Versão: 4.32.0 (Relatório Console Restaurado + Teardown Fix)
  */
 (function () {
     "use strict";
@@ -25,7 +25,17 @@
         { key: "fat_produtos_loja", label: "FAT. PRODUTOS LOJA", type: "currency" },
     ];
 
-    // --- Helpers de Substituição do GM (Tampermonkey) ---
+    // --- HELPERS (Definidos antes do uso para evitar erros) ---
+    function setStatus(msg, type = 'info') {
+        const el = document.getElementById("c04-status");
+        if (el) {
+            el.textContent = msg;
+            el.className = "";
+            if (type === 'error') el.classList.add('c04-status-error');
+            if (type === 'success') el.classList.add('c04-status-success');
+        }
+    }
+
     function addStyle(css) {
         const style = document.createElement('style');
         style.textContent = css;
@@ -36,7 +46,6 @@
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text);
         } else {
-            // Fallback simples
             const textarea = document.createElement('textarea');
             textarea.value = text;
             document.body.appendChild(textarea);
@@ -46,7 +55,57 @@
         }
     }
 
-    // --- Sistema de Debug ---
+    async function createIfr(url) {
+        const f = document.createElement("iframe");
+        f.style.display = "none";
+        f.src = url;
+        document.body.appendChild(f);
+        await new Promise(r => f.onload = r);
+        return f;
+    }
+
+    function parseBRLStrict(htmlOrText) {
+        const match = (htmlOrText || "").match(/R\$\s*([\d\.]*,\d{2})/);
+        return match ? parseFloat(match[1].replace(/\./g, "").replace(",", ".")) : 0;
+    }
+
+    function formatBRL(v) {
+        return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    }
+
+    function parseIntSafe(s) {
+        return parseInt((s || "0").replace(/\D/g, ""), 10) || 0;
+    }
+
+    function findVal(doc, label) {
+        const el = Array.from(doc.querySelectorAll("*")).find(x => x.innerText?.includes(label));
+        return el ? el.innerText.split(label)[1] : "0";
+    }
+
+    function formatDiffMsg(diff, perc, isCurrency = false) {
+        if (Math.abs(diff) < 0.05) return "";
+        if (!isCurrency) {
+            return `<span class="c04-diff-info c04-diff-error">Dif: ${diff}</span>`;
+        } else {
+            const absPerc = Math.abs(perc);
+            let colorClass = "c04-diff-green";
+            if (absPerc > 10) colorClass = "c04-diff-red";
+            else if (absPerc > 5) colorClass = "c04-diff-orange";
+            else if (absPerc > 2.5) colorClass = "c04-diff-yellow";
+            return `<span class="c04-diff-info ${colorClass}">Dif: ${formatBRL(diff)} (${perc.toFixed(1)}%)</span>`;
+        }
+    }
+
+    async function waitForTextInDoc(doc, txt) {
+        return new Promise(r => {
+            let c = 0;
+            const i = setInterval(() => {
+                if (doc.body.textContent.includes(txt) || c++ > 60) { clearInterval(i); r(); }
+            }, 250);
+        });
+    }
+
+    // --- SISTEMA DE DEBUG (RESTAURADO COMPLETO) ---
     const Debugger = {
         logs: {
             caixa: [],
@@ -61,7 +120,7 @@
 
         printAll: () => {
             console.clear();
-            console.log("%c 🐞 RELATÓRIO DE DEBUG - CLUBE04 v4.30.0 ", "background: #000; color: #0f0; font-size: 16px; padding: 10px; border-radius: 4px; font-weight: bold;");
+            console.log("%c 🐞 RELATÓRIO DE DEBUG - CLUBE04 v4.32.0 ", "background: #000; color: #0f0; font-size: 16px; padding: 10px; border-radius: 4px; font-weight: bold;");
 
             if (Debugger.logs.erros.length > 0) { console.group("❌ ERROS"); console.table(Debugger.logs.erros); console.groupEnd(); }
 
@@ -85,6 +144,8 @@
                 }
                 console.groupEnd();
             };
+
+            // 1. RELATÓRIO DE VENDAS
             console.groupCollapsed("🛒 1. RELATÓRIO VENDAS (CAIXA)");
             printTableGroup("1.1 GERAL (Todos os Itens)", Debugger.logs.vendas_analise);
             const sales = Debugger.logs.vendas_analise;
@@ -99,6 +160,7 @@
             printTableGroup("1.10 OUTROS / NÃO CATEGORIZADOS", sales.filter(i => i.Subcategoria === "IGNORADO" || i.Subcategoria.startsWith("OUTRA")));
             console.groupEnd();
 
+            // 2. PRODUÇÃO
             console.groupCollapsed("🐶 2. PRODUÇÃO (Execução por Colaborador)");
             console.groupCollapsed("2.1 Serviços Não Extra (Principais)");
             printTableGroup("2.1.1 Banhos", Debugger.logs.prod_banho, 'Colaborador');
@@ -110,6 +172,7 @@
             console.groupEnd();
             console.groupEnd();
 
+            // 3. CAIXA
             console.groupCollapsed("💰 3. CAIXA & FINANCEIRO");
             const cData = JSON.parse(JSON.stringify(Debugger.logs.caixa));
             if (cData.length) {
@@ -118,6 +181,8 @@
                 console.table(cData);
             } else console.log("Nenhum caixa encontrado.");
             console.groupEnd();
+
+            // 4. AUDITORIA
             console.group("⚠️ 4. AUDITORIA COMPLETA");
             if (Debugger.logs.auditoria_final.length) {
                 console.table(Debugger.logs.auditoria_final);
@@ -128,7 +193,7 @@
         }
     };
 
-    // --- HTML Styles (Injeção via JS puro agora) ---
+    // --- HTML Styles ---
     const STYLES_CSS = `
         #c04-painel { position: fixed; top: 10%; left: 50%; transform: translateX(-50%); width: 480px; max-height: 85vh; background: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); z-index: 2147483647; display: none; font-family: 'Segoe UI', Tahoma, sans-serif; border: 1px solid #cbd5e1; flex-direction: column; overflow: hidden; } 
         #c04-header { background: #0f172a; color: #fff; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; cursor: grab; border-radius: 12px 12px 0 0; user-select: none; } 
@@ -166,21 +231,20 @@
         .c04-diff-error { color: #b91c1c; font-weight: 800; }
     `;
 
+    // --- FUNÇÃO DE LIMPEZA (TEARDOWN) ---
+    function destroyModule() {
+        const el = document.getElementById("c04-painel");
+        if (el) el.remove();
+    }
+
     // --- Função Principal de Inicialização ---
     function initModule() {
-        if (document.getElementById("c04-painel")) {
-            // Se já existe, apenas mostra
-            document.getElementById("c04-painel").style.display = 'flex';
-            return;
-        }
-
-        // Injeta CSS
+        destroyModule();
         addStyle(STYLES_CSS);
 
-        // Cria a UI Principal
         const mainDiv = document.createElement("div");
         mainDiv.id = "c04-painel";
-        mainDiv.style.display = 'flex'; // Abre ao inicializar
+        mainDiv.style.display = 'flex';
         mainDiv.innerHTML = `
         <div id="c04-header"><span>Dashboard de Metas</span><button id="c04-close" style="background:none; border:none; color:#cbd5e1; cursor:pointer; font-size:24px; line-height:1;">×</button></div>
         <div id="c04-body">
@@ -201,19 +265,13 @@
         </div>`;
         document.body.appendChild(mainDiv);
 
-        // Configura Lógica
         setupLogic();
     }
 
     function setupLogic() {
         const elDataIni = document.getElementById("c04-data-ini"), elDataFim = document.getElementById("c04-data-fim"), elCheckPeriodo = document.getElementById("c04-periodo-check"), elStatus = document.getElementById("c04-status"), elResumo = document.getElementById("c04-resumo"), elBtnCopiar = document.getElementById("c04-copiar"), elDivAlert = document.getElementById("c04-divergencia"), elMsgAlert = document.getElementById("c04-divergencia-msg");
         
-        function getLocalToday() {
-            const d = new Date();
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        }
+        function getLocalToday() { const d = new Date(); const year = d.getFullYear(); const month = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${year}-${month}-${day}`; }
         const today = getLocalToday();
         elDataIni.max = today; elDataFim.max = today;
         const cached = JSON.parse(localStorage.getItem("c04_cache_v4") || "{}");
@@ -222,13 +280,10 @@
         elCheckPeriodo.checked = cached.isPeriodo || false;
         if (elCheckPeriodo.checked) document.getElementById("c04-container-fim").style.display = "block";
 
-        elDataIni.onchange = () => {
-            if (elDataIni.value > today) elDataIni.value = today;
-            elDataFim.min = elDataIni.value; if (elDataFim.value < elDataIni.value) elDataIni.value = elDataIni.value; saveState();
-        };
-        elDataFim.onchange = () => {
-            if (elDataFim.value > today) elDataFim.value = today; if (elDataFim.value < elDataIni.value) elDataIni.value = elDataFim.value; saveState();
-        };
+        function saveState() { localStorage.setItem("c04_cache_v4", JSON.stringify({ ini: elDataIni.value, fim: elDataFim.value, isPeriodo: elCheckPeriodo.checked })); }
+
+        elDataIni.onchange = () => { if (elDataIni.value > today) elDataIni.value = today; elDataFim.min = elDataIni.value; if (elDataFim.value < elDataIni.value) elDataIni.value = elDataIni.value; saveState(); };
+        elDataFim.onchange = () => { if (elDataFim.value > today) elDataFim.value = today; if (elDataFim.value < elDataIni.value) elDataIni.value = elDataFim.value; saveState(); };
         elCheckPeriodo.onchange = (e) => { document.getElementById("c04-container-fim").style.display = e.target.checked ? "block" : "none"; if (!e.target.checked) elDataFim.value = elDataIni.value; saveState(); };
         
         const mainDiv = document.getElementById("c04-painel");
@@ -240,18 +295,17 @@
                 moved = false;
                 const move = (evt) => {
                     if (Math.abs(evt.clientX - startX) > 3 || Math.abs(evt.clientY - startY) > 3) moved = true;
-                    if (moved) {
-                        element.style.left = `${iL + evt.clientX - startX}px`; element.style.top = `${iT + evt.clientY - startY}px`; element.style.transform = "none";
-                    }
+                    if (moved) { element.style.left = `${iL + evt.clientX - startX}px`; element.style.top = `${iT + evt.clientY - startY}px`; element.style.transform = "none"; }
                 };
                 const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-                document.addEventListener('mousemove', move);
-                document.addEventListener('mouseup', up);
+                document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
             };
         }
         setupDrag(mainDiv, document.getElementById("c04-header"));
         
-        document.getElementById("c04-close").onclick = () => mainDiv.style.display = 'none';
+        document.getElementById("c04-close").onclick = () => {
+            if (window.killAllModules) window.killAllModules(); else destroyModule();
+        };
 
         // --- Processamento ---
         document.getElementById("c04-gerar").onclick = async () => {
@@ -260,114 +314,46 @@
             elResumo.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b;font-style:italic;">⏳ Processando dados...</div>';
 
             const ini = elDataIni.value, fim = elCheckPeriodo.checked ? elDataFim.value : ini;
-            function saveState() { localStorage.setItem("c04_cache_v4", JSON.stringify({ ini: elDataIni.value, fim: elDataFim.value, isPeriodo: elCheckPeriodo.checked, resultados: cached.resultados })); }
             saveState();
             const dados = { fat_bruto: 0, fat_total: 0, qtd_serv_agend: 0, qtd_banho_avulso: 0, qtd_tosa_avulsa: 0, fat_extras: 0, qtd_extras_avulsos: 0, qtd_pacotes_banho: 0, fat_produtos_loja: 0 };
             const statusFlags = {};
-            // Categorização de Alertas
             const alertasBucket = { servicos: [], financeiro: [], caixa: [] };
             try {
-                // 1. VENDAS
                 setStatus("📦 Analisando Vendas...", "info");
                 const ifrProd = await createIfr(RELATORIOS.PRODUTO.url);
                 let salesData = { banhos: 0, tosas: 0, extrasQtd: 0, extrasFat: 0, pacotesQtd: 0, banhosTec: 0, tosaHigi: 0, lojaFat: 0, totalBruto: 0 };
                 try {
                     await searchWithAjaxHook(ifrProd, ini, fim, RELATORIOS.PRODUTO.btn, RELATORIOS.PRODUTO.target, true);
                     salesData = extractSalesFromProduto(ifrProd.contentDocument);
-
-                    dados.qtd_banho_avulso = salesData.banhos;
-                    dados.qtd_tosa_avulsa = salesData.tosas;
-                    dados.qtd_extras_avulsos = salesData.extrasQtd;
-                    dados.qtd_pacotes_banho = salesData.pacotesQtd;
-                    dados.fat_produtos_loja += salesData.lojaFat;
-                    dados.fat_bruto = salesData.totalBruto;
+                    dados.qtd_banho_avulso = salesData.banhos; dados.qtd_tosa_avulsa = salesData.tosas; dados.qtd_extras_avulsos = salesData.extrasQtd; dados.qtd_pacotes_banho = salesData.pacotesQtd; dados.fat_produtos_loja += salesData.lojaFat; dados.fat_bruto = salesData.totalBruto;
                 } catch (err) { Debugger.logError("Erro Vendas: " + err); throw new Error("Falha em Vendas."); } finally { ifrProd.remove(); }
 
-                // 2. PRODUÇÃO
                 setStatus("🐶 Verificando Produção...", "info");
                 const ifrServ = await createIfr(RELATORIOS.PRODUCAO.url);
                 let execData = { banhosPacoteExec: 0, tosasPacoteExec: 0, banhosParaTosarPacoteExec: 0, banhosAvulsosExec: 0, banhosParaTosarExec: 0, tosasAvulsasExec: 0, extrasExec: 0, extrasExecValor: 0, totalQtdNormal: 0 };
                 try {
                     await searchProducaoAjax(ifrServ, ini, fim, '0', RELATORIOS.PRODUCAO.target);
                     const execNormal = extractExecutionFromProducao(ifrServ.contentDocument, 'normal');
-
                     await searchProducaoAjax(ifrServ, ini, fim, '1', RELATORIOS.PRODUCAO.target);
                     const execExtras = extractExecutionFromProducao(ifrServ.contentDocument, 'extra');
-                    execData = {
-                        banhosPacoteExec: execNormal.banhosPacoteExec || 0,
-                        tosasPacoteExec: execNormal.tosasPacoteExec || 0,
-                        banhosParaTosarPacoteExec: execNormal.banhosParaTosarPacoteExec || 0,
-                        banhosAvulsosExec: execNormal.banhosAvulsosExec || 0,
-                        banhosParaTosarExec: execNormal.banhosParaTosarExec || 0,
-                        tosasAvulsasExec: execNormal.tosasAvulsasExec || 0,
-                        extrasExec: execExtras.extrasExec || 0,
-                        extrasExecValor: execExtras.extrasExecValor || 0,
-                        totalQtdNormal: execNormal.totalQtdNormal || 0
-                    };
-                    // Definição Híbrida
+                    execData = { banhosPacoteExec: execNormal.banhosPacoteExec || 0, tosasPacoteExec: execNormal.tosasPacoteExec || 0, banhosParaTosarPacoteExec: execNormal.banhosParaTosarPacoteExec || 0, banhosAvulsosExec: execNormal.banhosAvulsosExec || 0, banhosParaTosarExec: execNormal.banhosParaTosarExec || 0, tosasAvulsasExec: execNormal.tosasAvulsasExec || 0, extrasExec: execExtras.extrasExec || 0, extrasExecValor: execExtras.extrasExecValor || 0, totalQtdNormal: execNormal.totalQtdNormal || 0 };
                     const qtdAgendadoHibrido = (salesData.banhos + salesData.tosas + salesData.banhosTec) + (execData.banhosPacoteExec + execData.tosasPacoteExec + execData.banhosParaTosarPacoteExec);
                     dados.qtd_serv_agend = qtdAgendadoHibrido;
-
-                    // Valor Executado (Líquido) dos Extras
                     dados.fat_extras = execData.extrasExecValor;
                 } catch (err) { Debugger.logError("Erro Produção: " + err); throw new Error("Falha em Produção."); } finally { ifrServ.remove(); }
 
-                // 3. AUDITORIA OPERACIONAL
                 const auditItem = (tipo, vendido, executado, valorVenda = 0, valorExecutado = 0, isCurrency = false) => {
                     const diff = (vendido || 0) - (executado || 0);
-                    let status = "OK";
-                    let obs = "";
-                    let percent = (vendido > 0 ? (diff / vendido) * 100 : 0);
+                    let status = "OK"; let obs = ""; let percent = (vendido > 0 ? (diff / vendido) * 100 : 0);
                     if (tipo === "Faturamento total") {
-                        if (diff < -0.05) {
-                            status = "❌ ERRO";
-                            obs = `Líquido (${formatBRL(executado)}) maior que Bruto (${formatBRL(vendido)})! Verifique lançamentos fiscais.`;
-                            alertasBucket.financeiro.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`);
-                        } else if (percent > 5) {
-                            status = "⚠️ ATENÇÃO";
-                            obs = `Diferença de ${formatBRL(diff)} (${percent.toFixed(1)}%). Cuidado com descontos excessivos para não impactar a margem de lucro.`;
-                            alertasBucket.financeiro.push(`<span class="c04-alert-item" style="color:#b45309">⚠️ <b>${tipo}:</b> ${obs}</span>`);
-                        }
-                    }
-                    else {
-                        // Auditorias de Quantidade e Outros Financeiros
-                        if (diff > 0.05) {
-                            status = "❌ ERRO";
-                            obs = `${isCurrency ? 'Bruto' : 'Vendido'} ${isCurrency ? formatBRL(vendido) : vendido} > ${isCurrency ? 'Líquido' : 'Feito'} ${isCurrency ? formatBRL(executado) : executado}`;
-
-                            // Categorização
-                            if (isCurrency || ['Faturamento total', 'Fat. Serviços Extras'].includes(tipo)) {
-                                alertasBucket.financeiro.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`);
-                            } else {
-                                alertasBucket.servicos.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`);
-                            }
-
-                        } else if (diff < -0.05) {
-                            status = "⚠️ ALERTA";
-                            obs = `${isCurrency ? 'Líquido' : 'Feito'} ${isCurrency ? formatBRL(executado) : executado} > ${isCurrency ? 'Bruto' : 'Vendido'} ${isCurrency ? formatBRL(vendido) : vendido}`;
-
-                            if (isCurrency || ['Faturamento total', 'Fat. Serviços Extras'].includes(tipo)) {
-                                alertasBucket.financeiro.push(`<span class="c04-alert-item">⚠️ <b>${tipo}:</b> ${obs}</span>`);
-                            } else {
-                                alertasBucket.servicos.push(`<span class="c04-alert-item">⚠️ <b>${tipo}:</b> ${obs}</span>`);
-                            }
-                        }
-                    }
-
-                    const logObj = {
-                        Categoria: tipo,
-                        Status: status,
-                        Diferenca: isCurrency ? formatBRL(diff) : diff
-                    };
-                    if (isCurrency) {
-                        logObj.Bruto = formatBRL(vendido);
-                        logObj.Liquido = formatBRL(executado);
+                        if (diff < -0.05) { status = "❌ ERRO"; obs = `Líquido (${formatBRL(executado)}) maior que Bruto (${formatBRL(vendido)})! Verifique lançamentos fiscais.`; alertasBucket.financeiro.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`); } 
+                        else if (percent > 5) { status = "⚠️ ATENÇÃO"; obs = `Diferença de ${formatBRL(diff)} (${percent.toFixed(1)}%). Cuidado com descontos excessivos.`; alertasBucket.financeiro.push(`<span class="c04-alert-item" style="color:#b45309">⚠️ <b>${tipo}:</b> ${obs}</span>`); }
                     } else {
-                        logObj.Vendido = vendido;
-                        logObj.Executado = executado;
-                        logObj.ValorVenda = valorVenda > 0 ? formatBRL(valorVenda) : '-';
-                        logObj.ValorExecutado = valorExecutado > 0 ? formatBRL(valorExecutado) : '-';
+                        if (diff > 0.05) { status = "❌ ERRO"; obs = `${isCurrency ? 'Bruto' : 'Vendido'} ${isCurrency ? formatBRL(vendido) : vendido} > ${isCurrency ? 'Líquido' : 'Feito'} ${isCurrency ? formatBRL(executado) : executado}`; if (isCurrency || ['Faturamento total', 'Fat. Serviços Extras'].includes(tipo)) { alertasBucket.financeiro.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`); } else { alertasBucket.servicos.push(`<span class="c04-alert-item">❌ <b>${tipo}:</b> ${obs}</span>`); } } 
+                        else if (diff < -0.05) { status = "⚠️ ALERTA"; obs = `${isCurrency ? 'Líquido' : 'Feito'} ${isCurrency ? formatBRL(executado) : executado} > ${isCurrency ? 'Bruto' : 'Vendido'} ${isCurrency ? formatBRL(vendido) : vendido}`; if (isCurrency || ['Faturamento total', 'Fat. Serviços Extras'].includes(tipo)) { alertasBucket.financeiro.push(`<span class="c04-alert-item">⚠️ <b>${tipo}:</b> ${obs}</span>`); } else { alertasBucket.servicos.push(`<span class="c04-alert-item">⚠️ <b>${tipo}:</b> ${obs}</span>`); } }
                     }
+                    const logObj = { Categoria: tipo, Status: status, Diferenca: isCurrency ? formatBRL(diff) : diff };
+                    if (isCurrency) { logObj.Bruto = formatBRL(vendido); logObj.Liquido = formatBRL(executado); } else { logObj.Vendido = vendido; logObj.Executado = executado; logObj.ValorVenda = valorVenda > 0 ? formatBRL(valorVenda) : '-'; logObj.ValorExecutado = valorExecutado > 0 ? formatBRL(valorExecutado) : '-'; }
                     Debugger.logItem('auditoria_final', logObj);
                     return { diff, percent };
                 };
@@ -378,7 +364,6 @@
                 statusFlags.qtd_extras_avulsos = auditItem("Serviços Extras", dados.qtd_extras_avulsos, execData.extrasExec, salesData.extrasFat, execData.extrasExecValor);
                 statusFlags.qtd_serv_agend = auditItem("Qtd Serviços Agendados (Global)", dados.qtd_serv_agend, execData.totalQtdNormal);
 
-                // 4. LOJA
                 setStatus("🛍️ Calculando Loja...", "info");
                 const ifrVenda = await createIfr(RELATORIOS.VENDA.url);
                 try {
@@ -389,55 +374,30 @@
                     dados.fat_produtos_loja = totalVenda - totalEstetica;
                 } catch (err) { Debugger.logError("Erro Loja: " + err); } finally { ifrVenda.remove(); }
 
-                // 5. CAIXA
                 setStatus("💰 Auditando Caixa...", "info");
                 const ifrCaixa = await createIfr(RELATORIOS.CAIXA.url);
                 try {
-                    const dateD1 = new Date(ini);
-                    dateD1.setDate(dateD1.getDate() - 1);
+                    const dateD1 = new Date(ini); dateD1.setDate(dateD1.getDate() - 1);
                     const iniD1 = dateD1.toLocaleDateString('pt-BR', { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').reverse().join('-');
                     const dateF1 = new Date(fim); dateF1.setDate(dateF1.getDate() + 1);
                     const fimD1 = dateF1.toLocaleDateString('pt-BR', { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').reverse().join('-');
-
                     await searchWithAjaxHook(ifrCaixa, iniD1, fimD1, RELATORIOS.CAIXA.btn, RELATORIOS.CAIXA.target);
                     const caixaData = extractCaixaData(ifrCaixa.contentDocument, ini, fim);
                     if (caixaData.total > 0) dados.fat_total = caixaData.total; else statusFlags.caixa = "zerado";
-                    // Alertas de Caixa vão para categoria própria
-                    if (caixaData.alertas && caixaData.alertas.length > 0) {
-                        alertasBucket.caixa.push(...caixaData.alertas);
-                    }
-
+                    if (caixaData.alertas && caixaData.alertas.length > 0) { alertasBucket.caixa.push(...caixaData.alertas); }
                     statusFlags.fat_total = auditItem("Faturamento total", dados.fat_bruto, dados.fat_total, 0, 0, true);
                     statusFlags.fat_extras = { diff: salesData.extrasFat - execData.extrasExecValor, percent: (salesData.extrasFat > 0 ? ((salesData.extrasFat - execData.extrasExecValor) / salesData.extrasFat) * 100 : 0) };
                 } catch (err) { Debugger.logError("Erro Caixa: " + err); throw new Error("Erro Caixa."); } finally { ifrCaixa.remove(); }
 
-                // FIM - Renderização
                 Debugger.printAll();
                 saveState();
                 render(dados, statusFlags);
 
-                // Construção do HTML de Alertas
                 let alertasHtml = "";
-                if (alertasBucket.servicos.length > 0) {
-                    alertasHtml += `<div class="c04-alert-category-header">🛠️ Execução de Serviços</div>`;
-                    alertasHtml += alertasBucket.servicos.join("");
-                    // Mensagem unificada de Ação
-                    alertasHtml += `<div class="c04-alert-action-footer">⚠️ Ação: Reforçar com a equipe o manuseio correto da fila de serviço e Caixa PDV para que não ocorra erros.</div>`;
-                }
-                if (alertasBucket.financeiro.length > 0) {
-                    alertasHtml += `<div class="c04-alert-category-header">💰 Financeiro</div>`;
-                    alertasHtml += alertasBucket.financeiro.join("");
-                }
-                if (alertasBucket.caixa.length > 0) {
-                    alertasHtml += `<div class="c04-alert-category-header">📦 Caixa & Operacional</div>`;
-                    alertasHtml += alertasBucket.caixa.join("");
-                }
-
-                if (alertasHtml !== "") {
-                    elMsgAlert.innerHTML = alertasHtml;
-                    elDivAlert.style.display = "block";
-                }
-
+                if (alertasBucket.servicos.length > 0) { alertasHtml += `<div class="c04-alert-category-header">🛠️ Execução de Serviços</div>` + alertasBucket.servicos.join(""); alertasHtml += `<div class="c04-alert-action-footer">⚠️ Ação: Reforçar com a equipe o manuseio correto da fila de serviço e Caixa PDV para que não ocorra erros.</div>`; }
+                if (alertasBucket.financeiro.length > 0) { alertasHtml += `<div class="c04-alert-category-header">💰 Financeiro</div>` + alertasBucket.financeiro.join(""); }
+                if (alertasBucket.caixa.length > 0) { alertasHtml += `<div class="c04-alert-category-header">📦 Caixa & Operacional</div>` + alertasBucket.caixa.join(""); }
+                if (alertasHtml !== "") { elMsgAlert.innerHTML = alertasHtml; elDivAlert.style.display = "block"; }
                 elBtnCopiar.style.display = "block";
                 setStatus("✅ Concluído!", "success");
 
@@ -447,7 +407,7 @@
         };
     }
 
-    // --- AJAX ---
+    // --- AJAX Helpers ---
     function searchWithAjaxHook(ifr, i, f, btnSelector, targetUrl, forceExpand = false) {
         return new Promise((resolve, reject) => {
             const doc = ifr.contentDocument; const win = ifr.contentWindow;
@@ -465,6 +425,7 @@
             doc.querySelector(btnSelector).click();
         });
     }
+
     function searchProducaoAjax(ifr, i, f, ex, targetUrl) {
         return new Promise((resolve, reject) => {
             const doc = ifr.contentDocument; const win = ifr.contentWindow;
@@ -481,6 +442,7 @@
             doc.querySelector("#buttonbuscarRelatorioProducaoVenda").click();
         });
     }
+
     async function tryExpandTable(doc) {
         try {
             const sel = doc.querySelector("select[name*='_length']");
@@ -491,50 +453,22 @@
         } catch (e) { }
     }
 
-    // --- PARSERS & HELPERS ---
-    function parseBRLStrict(htmlOrText) {
-        const match = (htmlOrText || "").match(/R\$\s*([\d\.]*,\d{2})/);
-        return match ? parseFloat(match[1].replace(/\./g, "").replace(",", ".")) : 0;
-    }
-
-    function formatBRL(v) {
-        return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    }
-
-    function formatDiffMsg(diff, perc, isCurrency = false) {
-        if (Math.abs(diff) < 0.05) return "";
-        if (!isCurrency) {
-            return `<span class="c04-diff-info c04-diff-error">Dif: ${diff}</span>`;
-        } else {
-            const absPerc = Math.abs(perc);
-            let colorClass = "c04-diff-green";
-            if (absPerc > 10) colorClass = "c04-diff-red";
-            else if (absPerc > 5) colorClass = "c04-diff-orange";
-            else if (absPerc > 2.5) colorClass = "c04-diff-yellow";
-            return `<span class="c04-diff-info ${colorClass}">Dif: ${formatBRL(diff)} (${perc.toFixed(1)}%)</span>`;
-        }
-    }
-
+    // --- Business Logic Extractors ---
     function extractCaixaData(doc, userIni, userFim) {
-        let total = 0;
-        let alertas = []; const contagemDias = {};
+        let total = 0; let alertas = []; const contagemDias = {};
         const rows = Array.from(doc.querySelectorAll("#idTabelaRelatorio tbody tr"));
         const dtIni = new Date(userIni + "T00:00:00"); const dtFim = new Date(userFim + "T23:59:59");
         rows.forEach(tr => {
             if (tr.cells.length < 6) return;
-            const idCaixa = tr.cells[0].innerText.trim();
-            const valorCaixa = parseBRLStrict(tr.cells[5].textContent);
+            const idCaixa = tr.cells[0].innerText.trim(); const valorCaixa = parseBRLStrict(tr.cells[5].textContent);
             const htmlData = tr.cells[1].innerHTML; const txtData = tr.cells[1].textContent;
             const matchAbertura = htmlData.match(/Abertura:\s*<\/b>\s*(\d{2}\/\d{2}\/\d{4})/i) || txtData.match(/Abertura:\s*(\d{2}\/\d{2}\/\d{4})/);
             const matchFechamento = htmlData.match(/Fechamento:\s*<\/b>\s*(\d{2}\/\d{2}\/\d{4})/i) || txtData.match(/Fechamento:\s*(\d{2}\/\d{2}\/\d{4})/);
-
             if (matchAbertura) {
-                const strAbertura = matchAbertura[1];
-                const strFechamento = matchFechamento ? matchFechamento[1] : null;
+                const strAbertura = matchAbertura[1]; const strFechamento = matchFechamento ? matchFechamento[1] : null;
                 const [diaA, mesA, anoA] = strAbertura.split('/'); const dateAbertura = new Date(`${anoA}-${mesA}-${diaA}T12:00:00`);
                 let dateFechamento = null;
                 if (strFechamento) { const [diaF, mesF, anoF] = strFechamento.split('/'); dateFechamento = new Date(`${anoF}-${mesF}-${diaF}T12:00:00`); }
-
                 let contabilizar = false;
                 const fechouNoPeriodo = dateFechamento && dateFechamento >= dtIni && dateFechamento <= dtFim;
                 const abriuNoPeriodo = dateAbertura >= dtIni && dateAbertura <= dtFim;
@@ -556,29 +490,17 @@
         let banhos = 0, tosas = 0, extrasQtd = 0, extrasFat = 0, pacotesQtd = 0, banhosTec = 0, lojaFat = 0, totalBruto = 0;
         doc.getElementById("idTabelaVenda").querySelectorAll("tbody tr").forEach(tr => {
             if (tr.cells.length < 4) return;
-            const nome = tr.cells[0].textContent.toLowerCase().trim();
-            const cat = tr.cells[1].textContent.toLowerCase().trim();
-            const qtd = parseIntSafe(tr.cells[2].textContent);
-            const val = parseBRLStrict(tr.cells[3].textContent);
-
-            totalBruto += val;
-
-            let sub = "IGNORADO";
+            const nome = tr.cells[0].textContent.toLowerCase().trim(); const cat = tr.cells[1].textContent.toLowerCase().trim(); const qtd = parseIntSafe(tr.cells[2].textContent); const val = parseBRLStrict(tr.cells[3].textContent);
+            totalBruto += val; let sub = "IGNORADO";
             if (cat === 'centro de estética' || cat === 'centro de estetica') {
                 if (nome.includes("pacote")) {
-                    if (nome.includes("tosa")) sub = "PACOTE TOSA";
-                    else if (nome.includes("banho")) { pacotesQtd += qtd; sub = "PACOTE BANHO"; }
-                    else sub = "PACOTE SERV EXTRA";
-                }
-                else if (nome.includes("higiênica") || nome.includes("higienica")) { extrasQtd += qtd; extrasFat += val; sub = "SERV. EXTRA"; }
-                else if (nome === '-banho' || nome === 'banho') { banhos += qtd; sub = "BANHO AVULSO"; }
-                else if (nome.includes("banho para tosar")) { banhosTec += qtd; sub = "BANHO P/ TOSAR"; }
-                else if (nome.includes("tosa")) { tosas += qtd; sub = "TOSA AVULSA"; }
+                    if (nome.includes("tosa")) sub = "PACOTE TOSA"; else if (nome.includes("banho")) { pacotesQtd += qtd; sub = "PACOTE BANHO"; } else sub = "PACOTE SERV EXTRA";
+                } else if (nome.includes("higiênica") || nome.includes("higienica")) { extrasQtd += qtd; extrasFat += val; sub = "SERV. EXTRA"; } 
+                else if (nome === '-banho' || nome === 'banho') { banhos += qtd; sub = "BANHO AVULSO"; } 
+                else if (nome.includes("banho para tosar")) { banhosTec += qtd; sub = "BANHO P/ TOSAR"; } 
+                else if (nome.includes("tosa")) { tosas += qtd; sub = "TOSA AVULSA"; } 
                 else if (!nome.includes("banho cortesia")) { extrasQtd += qtd; extrasFat += val; sub = "SERV. EXTRA"; }
-            } else {
-                lojaFat += val;
-                sub = "PRODUTO LOJA";
-            }
+            } else { lojaFat += val; sub = "PRODUTO LOJA"; }
             Debugger.logItem('vendas_analise', { Produto: nome, Categoria: cat, Subcategoria: sub, Qtd: qtd, ValorTotal: val });
         });
         return { banhos, tosas, extrasQtd, extrasFat, pacotesQtd, banhosTec, lojaFat, totalBruto };
@@ -588,99 +510,42 @@
         let banhosPacoteExec = 0, tosasPacoteExec = 0, banhosParaTosarPacoteExec = 0, banhosAvulsosExec = 0, banhosParaTosarExec = 0, tosasAvulsasExec = 0, extrasExec = 0, extrasExecValor = 0, totalQtdNormal = 0;
         doc.getElementById("idTabelaVenda").querySelectorAll("tbody tr").forEach(tr => {
             if (tr.cells.length < 5) return;
-            const collab = tr.cells[0].textContent.trim();
-            const nome = tr.cells[2].textContent.toLowerCase();
-            const noPacote = parseIntSafe(tr.cells[3].textContent);
-            const semPacote = parseIntSafe(tr.cells[4].textContent);
-            const val = parseBRLStrict(tr.cells[6]?.textContent);
-            const totalLinha = noPacote + semPacote;
-
+            const collab = tr.cells[0].textContent.trim(); const nome = tr.cells[2].textContent.toLowerCase(); const noPacote = parseIntSafe(tr.cells[3].textContent); const semPacote = parseIntSafe(tr.cells[4].textContent); const val = parseBRLStrict(tr.cells[6]?.textContent); const totalLinha = noPacote + semPacote;
             if (mode === 'normal') {
                 totalQtdNormal += totalLinha;
-                if (nome.includes("banho") && !nome.includes("para tosar")) {
-                    banhosPacoteExec += noPacote; banhosAvulsosExec += semPacote;
-                    Debugger.logItem('prod_banho', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha });
-                }
-                else if (nome.includes("tosa") && !nome.includes("higienica") && !nome.includes("banho para tosar")) {
-                    tosasPacoteExec += noPacote;
-                    tosasAvulsasExec += semPacote;
-                    Debugger.logItem('prod_tosa', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha });
-                }
-                else if (nome.includes("banho para tosar")) {
-                    banhosParaTosarExec += semPacote;
-                    banhosParaTosarPacoteExec += noPacote;
-                    Debugger.logItem('prod_tecnico', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha });
-                }
-            }
-            else if (mode === 'extra') {
-                extrasExec += semPacote;
-                extrasExecValor += val;
-                Debugger.logItem('prod_extras', {
-                    Colaborador: collab,
-                    Servico: nome,
-                    NoPacote: noPacote,
-                    SemPacote: semPacote,
-                    Total: totalLinha,
-                    'Valor Total (R$)': val
-                });
+                if (nome.includes("banho") && !nome.includes("para tosar")) { banhosPacoteExec += noPacote; banhosAvulsosExec += semPacote; Debugger.logItem('prod_banho', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha }); } 
+                else if (nome.includes("tosa") && !nome.includes("higienica") && !nome.includes("banho para tosar")) { tosasPacoteExec += noPacote; tosasAvulsasExec += semPacote; Debugger.logItem('prod_tosa', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha }); } 
+                else if (nome.includes("banho para tosar")) { banhosParaTosarExec += semPacote; banhosParaTosarPacoteExec += noPacote; Debugger.logItem('prod_tecnico', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha }); }
+            } else if (mode === 'extra') {
+                extrasExec += semPacote; extrasExecValor += val; Debugger.logItem('prod_extras', { Colaborador: collab, Servico: nome, NoPacote: noPacote, SemPacote: semPacote, Total: totalLinha, 'Valor Total (R$)': val });
             }
         });
         return { banhosPacoteExec, tosasPacoteExec, banhosParaTosarPacoteExec, banhosAvulsosExec, banhosParaTosarExec, tosasAvulsasExec, extrasExec, extrasExecValor, totalQtdNormal };
     }
 
-    async function waitForTextInDoc(doc, txt) { return new Promise(r => { let c = 0; const i = setInterval(() => { if (doc.body.textContent.includes(txt) || c++ > 60) { clearInterval(i); r(); } }, 250); }); }
-    async function createIfr(u) { const f = document.createElement("iframe"); f.style.display = "none"; f.src = u; document.body.appendChild(f); await new Promise(r => f.onload = r); return f; }
-    function parseIntSafe(s) { return parseInt((s || "0").replace(/\D/g, ""), 10) || 0; }
-    function findVal(doc, l) { const e = Array.from(doc.querySelectorAll("*")).find(x => x.innerText?.includes(l)); return e ? e.innerText.split(l)[1] : "0"; }
-    function setStatus(m, t) { const el = document.getElementById("c04-status"); if (el) { el.textContent = m; el.className = ""; if (t === 'error') el.classList.add('c04-status-error'); if (t === 'success') el.classList.add('c04-status-success'); } }
-
     function render(d, flags = {}) {
         const elResumo = document.getElementById("c04-resumo");
         if (!d || !elResumo) return;
-
         elResumo.innerHTML = `<table class="c04-table">${INDICADORES.map(i => {
-            let aviso = "";
-            let subtitle = "";
-
-            if (i.key === 'fat_total') {
-                if (flags.caixa) aviso = `<span class="c04-warning-tag">${flags.caixa === 'zerado' ? 'VAZIO' : 'ERRO'}</span>`;
-                if (flags.fat_total) subtitle = formatDiffMsg(flags.fat_total.diff, flags.fat_total.percent, true);
-            }
-            else if (i.key === 'fat_extras' && flags.fat_extras) {
-                subtitle = formatDiffMsg(flags.fat_extras.diff, flags.fat_extras.percent, true);
-            }
-            else if (i.key === 'qtd_serv_agend' && flags.qtd_serv_agend) {
-                subtitle = formatDiffMsg(flags.qtd_serv_agend.diff, flags.qtd_serv_agend.percent);
-            }
-            else if (i.key === 'qtd_banho_avulso' && flags.qtd_banho_avulso) {
-                subtitle = formatDiffMsg(flags.qtd_banho_avulso.diff, flags.qtd_banho_avulso.percent);
-            }
-            else if (i.key === 'qtd_tosa_avulsa' && flags.qtd_tosa_avulsa) {
-                subtitle = formatDiffMsg(flags.qtd_tosa_avulsa.diff, flags.qtd_tosa_avulsa.percent);
-            }
-            else if (i.key === 'qtd_extras_avulsos' && flags.qtd_extras_avulsos) {
-                subtitle = formatDiffMsg(flags.qtd_extras_avulsos.diff, flags.qtd_extras_avulsos.percent);
-            }
-
+            let aviso = ""; let subtitle = "";
+            if (i.key === 'fat_total') { if (flags.caixa) aviso = `<span class="c04-warning-tag">${flags.caixa === 'zerado' ? 'VAZIO' : 'ERRO'}</span>`; if (flags.fat_total) subtitle = formatDiffMsg(flags.fat_total.diff, flags.fat_total.percent, true); } 
+            else if (i.key === 'fat_extras' && flags.fat_extras) { subtitle = formatDiffMsg(flags.fat_extras.diff, flags.fat_extras.percent, true); } 
+            else if (i.key === 'qtd_serv_agend' && flags.qtd_serv_agend) { subtitle = formatDiffMsg(flags.qtd_serv_agend.diff, flags.qtd_serv_agend.percent); } 
+            else if (i.key === 'qtd_banho_avulso' && flags.qtd_banho_avulso) { subtitle = formatDiffMsg(flags.qtd_banho_avulso.diff, flags.qtd_banho_avulso.percent); } 
+            else if (i.key === 'qtd_tosa_avulsa' && flags.qtd_tosa_avulsa) { subtitle = formatDiffMsg(flags.qtd_tosa_avulsa.diff, flags.qtd_tosa_avulsa.percent); } 
+            else if (i.key === 'qtd_extras_avulsos' && flags.qtd_extras_avulsos) { subtitle = formatDiffMsg(flags.qtd_extras_avulsos.diff, flags.qtd_extras_avulsos.percent); }
             if ((i.key.includes('banho') || i.key.includes('tosa')) && flags.vendas) aviso = `<span class="c04-warning-tag">ERRO VENDAS</span>`;
             return `<tr><td>${i.label}</td><td>${i.type === 'currency' ? formatBRL(d[i.key]) : d[i.key]}${aviso}${subtitle}</td></tr>`;
         }).join('')}</table>`;
-
         const btn = document.getElementById("c04-copiar");
         if (btn) btn.onclick = () => {
             const txt = INDICADORES.map(i => i.type === 'currency' ? d[i.key].toFixed(2).replace(".", ",") : d[i.key]).join("\n");
-            copyToClipboard(txt);
-            setStatus("Copiado!", "success");
-
-            // Feedback Visual
-            btn.classList.add("c04-btn-copied");
-            btn.innerText = "COPIADO!";
-            setTimeout(() => {
-                btn.classList.remove("c04-btn-copied");
-                btn.innerText = "COPIAR VALORES";
-            }, 1000);
+            copyToClipboard(txt); setStatus("Copiado!", "success"); btn.classList.add("c04-btn-copied"); btn.innerText = "COPIADO!"; setTimeout(() => { btn.classList.remove("c04-btn-copied"); btn.innerText = "COPIAR VALORES"; }, 1000);
         };
     }
+
+    // --- LISTENER GLOBAL DE TEARDOWN ---
+    window.addEventListener('c04_global_teardown', destroyModule);
 
     // --- ESCUTA O EVENTO DA SUITE ---
     window.addEventListener('c04_open_metas', function () {
