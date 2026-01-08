@@ -23,18 +23,41 @@
 
     let ACTIVE_BASE_URL = null;
 
-    async function initEnvironment() {
+async function initEnvironment() {
         if (ACTIVE_BASE_URL) return ACTIVE_BASE_URL;
+
+        // 1. Cria o controlador de cancelamento
+        const controller = new AbortController();
+        const signal = controller.signal;
+
         const checkLocal = new Promise((resolve, reject) => {
-            fetch(ENV_CONFIG.LOCAL_ROOT + 'clube04-suite.js', { method: 'HEAD', mode: 'no-cors' })
-                .then(() => resolve(true)).catch(() => reject());
+            // 2. Passamos o 'signal' para o fetch
+            fetch(ENV_CONFIG.LOCAL_ROOT + 'clube04-suite.js', { 
+                method: 'HEAD', 
+                mode: 'no-cors', 
+                signal: signal 
+            })
+            .then(() => resolve(true))
+            .catch((err) => {
+                // Se foi abortado, rejeitamos silenciosamente ou tratamos como erro
+                reject(err);
+            });
         });
-        const timeout = new Promise((_, reject) => setTimeout(() => reject('timeout'), ENV_CONFIG.TIMEOUT_MS));
+
+        const timeout = new Promise((_, reject) => {
+            setTimeout(() => {
+                // 3. Ao estourar o tempo, cancelamos a requisição de rede real!
+                controller.abort(); 
+                reject('timeout');
+            }, ENV_CONFIG.TIMEOUT_MS);
+        });
+
         try {
             await Promise.race([checkLocal, timeout]);
             console.log("⚡ [SUITE] Modo LOCAL.");
             ACTIVE_BASE_URL = ENV_CONFIG.LOCAL_ROOT;
         } catch (e) {
+            // Se o erro for 'AbortError', significa que foi o nosso timeout que causou
             console.log("☁️ [SUITE] Modo PROD.");
             ACTIVE_BASE_URL = ENV_CONFIG.PROD_ROOT;
         }
