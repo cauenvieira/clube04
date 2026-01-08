@@ -1,11 +1,10 @@
 /**
  * CLUBE04 - MÓDULO PONTO (Suite Central)
- * Versão: 10.0.0 (Drag Fix + Total Reset + Stable)
+ * Versão: 10.2.0 (Keyboard Flow Perfected)
  */
 (function () {
     "use strict";
 
-    // --- CONFIGURAÇÕES ---
     const CONFIG = {
         domain: 'clube04.com.br',
         urlAlvo: 'https://clube04.com.br/digital/gerenciarponto.php',
@@ -15,67 +14,35 @@
         urlJSZip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
     };
 
-    // --- ESTADO ---
-    const State = {
-        iframe: null,
-        processando: false,
-        dadosCache: [],
-        editandoAgora: null,
-        currentIndex: -1
-    };
+    const State = { iframe: null, processando: false, dadosCache: [], editandoAgora: null, currentIndex: -1, selecionados: new Set() };
 
     // --- UTILS ---
     const Utils = {
         toast: (msg, tipo = 'info') => {
             const t = document.getElementById('c04-toast');
-            if (t) {
-                t.innerText = msg;
-                t.style.background = tipo === 'error' ? '#ef4444' : (tipo === 'success' ? '#10b981' : '#334155');
-                t.classList.add('show');
-                setTimeout(() => t.classList.remove('show'), 2000);
-            }
+            if (t) { t.innerText = msg; t.style.background = tipo === 'error' ? '#ef4444' : (tipo === 'success' ? '#10b981' : '#334155'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
         },
-        createIframe: (url) => {
-            return new Promise((resolve) => {
-                const ifr = document.createElement('iframe');
-                // Estilos para evitar erros de renderização visual no sistema legado
-                ifr.style.width = '1024px'; ifr.style.height = '768px';
-                ifr.style.position = 'fixed'; ifr.style.top = '-9999px'; ifr.style.left = '-9999px';
-                ifr.style.visibility = 'visible';
-                ifr.src = url;
-                ifr.onload = () => resolve(ifr);
-                document.body.appendChild(ifr);
-            });
-        },
+        createIframe: (url) => { return new Promise((resolve) => { const ifr = document.createElement('iframe'); ifr.style.cssText='width:1024px;height:768px;position:fixed;top:-9999px;left:-9999px;visibility:visible;'; ifr.src = url; ifr.onload = () => resolve(ifr); document.body.appendChild(ifr); }); },
         sleep: (ms) => new Promise(r => setTimeout(r, ms)),
         waitForSpecificUrl: (win, partialUrl) => {
             return new Promise((resolve) => {
                 if (!win.$) { setTimeout(resolve, 1500); return; }
-                let resolved = false;
-                const timeout = setTimeout(() => { if(!resolved) { resolved=true; resolve(); } }, 15000);
-                const handler = (event, xhr, settings) => {
-                    if (settings && settings.url && settings.url.includes(partialUrl)) {
-                        clearTimeout(timeout);
-                        win.$(win.document).off("ajaxComplete", handler);
-                        resolved = true;
-                        setTimeout(resolve, 300);
-                    }
-                };
+                let resolved = false; const timeout = setTimeout(() => { if(!resolved) { resolved=true; resolve(); } }, 15000);
+                const handler = (event, xhr, settings) => { if (settings && settings.url && settings.url.includes(partialUrl)) { clearTimeout(timeout); win.$(win.document).off("ajaxComplete", handler); resolved = true; setTimeout(resolve, 300); } };
                 win.$(win.document).on("ajaxComplete", handler);
             });
         },
         timeToMin: (t) => { if (!t || !t.includes(':')) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; },
         getDataInfo: (str) => {
             if (!str) return { data: "-", dia: "-", iso: "" };
-            const cleanStr = str.replace(/(\r\n|\n|\r)/gm, "").trim();
-            const match = cleanStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            const cleanStr = str.replace(/(\r\n|\n|\r)/gm, "").trim(); const match = cleanStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
             if (!match) return { data: cleanStr, dia: "-", iso: "" };
-            const [_, d, m, y] = match;
-            const dateObj = new Date(`${y}-${m}-${d}T12:00:00`);
+            const [_, d, m, y] = match; const dateObj = new Date(`${y}-${m}-${d}T12:00:00`);
             const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
             return { data: `${d}/${m}/${y}`, dia: dias[dateObj.getDay()], iso: `${y}-${m}-${d}`, obj: dateObj };
         },
-        copyText: (text) => { navigator.clipboard.writeText(text).then(() => Utils.toast("Copiado!", "success")); }
+        copyText: (text) => { navigator.clipboard.writeText(text).then(() => Utils.toast("Copiado!", "success")); },
+        normalize: (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     };
 
     // --- CSS ---
@@ -83,7 +50,6 @@
         #c04-ponto-painel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 500px; max-height: 90vh; background: #fff; border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); z-index: 999999; display: flex; flex-direction: column; font-family: 'Segoe UI', sans-serif; border: 1px solid #ccc; overflow: hidden; transition: width 0.3s ease; }
         #c04-ponto-painel.expanded { width: 1000px; max-width: 95vw; }
         #c04-header { background: #064e3b; color: #fff; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; cursor: grab; }
-        #c04-header:active { cursor: grabbing; }
         #c04-header h3 { margin: 0; font-size: 15px; font-weight: 600; text-transform: uppercase; }
         #c04-close { cursor: pointer; font-size: 20px; font-weight: bold; opacity: 0.8; }
         #c04-body { padding: 15px; overflow-y: auto; background: #f8f9fa; display: flex; flex-direction: column; gap: 15px; position: relative; }
@@ -95,8 +61,8 @@
         .c04-search-input { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px; flex:1; }
         .c04-scroll-area { max-height: 120px; overflow-y: auto; padding: 5px; outline: none; }
         .c04-check-item { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px; cursor: pointer; border: 1px solid transparent; }
-        .c04-check-item:hover { background: #e9ecef; }
-        .c04-check-item:focus { background: #e0f2fe; border-color: #3b82f6; outline: none; }
+        .c04-check-item:hover, .c04-check-item:focus { background: #e0f2fe; outline: none; }
+        .c04-check-item:focus { border-left: 3px solid #064e3b; background: #d1fae5; }
         .c04-btn { padding: 10px; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; color: white; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
         .c04-btn-primary { background: #10b981; } .c04-btn-primary:hover { background: #059669; }
         .c04-btn-success { background: #2563eb; display: none; }
@@ -127,20 +93,32 @@
         .c04-add-area { background: #f0fdf4; border: 1px dashed #16a34a; padding: 10px; border-radius: 6px; margin-top: 15px; }
         .c04-add-row { display: flex; gap: 5px; margin-top: 5px; }
         .c04-select-type { padding: 5px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        #c04-selected-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-height: 20px; }
+        .c04-sel-chip { background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 12px; font-size: 11px; display: flex; align-items: center; gap: 5px; border: 1px solid #bfdbfe; }
+        .c04-sel-remove { cursor: pointer; font-weight: bold; color: #3b82f6; } .c04-sel-remove:hover { color: #1d4ed8; }
         #c04-toast { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 1000000; }
         #c04-toast.show { opacity: 1; bottom: 40px; }
     `;
 
+    // --- VARIÁVEL GLOBAL PARA LISTENER DO TECLADO ---
+    let keydownHandler = null;
+
+    // --- FUNÇÃO DE LIMPEZA (TEARDOWN) ---
+    function destroyModule() {
+        if (keydownHandler) { document.removeEventListener('keydown', keydownHandler); keydownHandler = null; }
+        const el = document.getElementById('c04-ponto-painel'); if (el) el.remove();
+        if (State.iframe) { State.iframe.remove(); State.iframe = null; }
+    }
+
     // --- INICIALIZAÇÃO ---
     function initModule() {
-        if (document.getElementById('c04-ponto-painel')) { document.getElementById('c04-ponto-painel').style.display = 'flex'; return; }
-        if (!window.location.hostname.includes(CONFIG.domain)) return alert("Use no sistema Clube04.");
-
+        destroyModule();
+        
         const style = document.createElement('style'); style.textContent = STYLES_CSS; document.head.appendChild(style);
         const div = document.createElement('div'); div.id = 'c04-ponto-painel';
         
         div.innerHTML = `
-            <div id="c04-header"><h3>🕒 Auditoria & Edição (v10.0)</h3><span id="c04-close">×</span></div>
+            <div id="c04-header"><h3>🕒 Gestão de Ponto (v10.2)</h3><span id="c04-close">×</span></div>
             <div id="c04-body">
                 <div class="c04-row">
                     <div class="c04-col"><label class="c04-label">Mês Início</label><input type="month" id="c04-ini" class="c04-input"></div>
@@ -150,14 +128,15 @@
                     <label class="c04-label">Colaboradores</label>
                     <div class="c04-list-container">
                         <div class="c04-search-box">
-                            <input type="text" id="c04-search-list" class="c04-search-input" placeholder="🔍 Filtrar ou Enter para selecionar...">
-                            <button class="c04-btn c04-btn-danger" id="c04-clear-list">Limpar</button>
+                            <input type="text" id="c04-search-list" class="c04-search-input" placeholder="🔍 Buscar nome (Seta para navegar)...">
+                            <button class="c04-btn c04-btn-danger" id="c04-clear-list" title="Atalho: Delete">Limpar</button>
                         </div>
-                        <div class="c04-scroll-area" id="c04-list-items" tabindex="0"><div style="padding:10px;color:#999;">Carregando...</div></div>
+                        <div class="c04-scroll-area" id="c04-list-items" tabindex="-1"><div style="padding:10px;color:#999;">Carregando...</div></div>
                     </div>
+                    <div id="c04-selected-tags"></div>
                 </div>
                 <div id="c04-status-text">Pronto.</div>
-                <button id="c04-btn-run" class="c04-btn c04-btn-primary">BUSCAR DADOS</button>
+                <button id="c04-btn-run" class="c04-btn c04-btn-primary">BUSCAR DADOS (Enter)</button>
                 <button id="c04-btn-zip" class="c04-btn c04-btn-success">💾 BAIXAR ZIP</button>
                 <div id="c04-results-wrapper"></div>
                 
@@ -185,6 +164,8 @@
         const m = new Date(); m.setMonth(m.getMonth()-1); 
         const iso = m.toISOString().slice(0,7);
         document.getElementById('c04-ini').value = iso; document.getElementById('c04-fim').value = iso;
+        
+        setTimeout(() => document.getElementById('c04-search-list').focus(), 100);
     }
 
     // --- CARGA DE COLABORADORES ---
@@ -207,122 +188,166 @@
 
         if(options.length === 0) { listArea.innerHTML = "Erro: Lista vazia."; return; }
 
-        listArea.innerHTML = `<div class="c04-check-item" style="font-weight:bold; border-bottom:1px solid #eee;"><input type="checkbox" id="c04-check-all"> Selecionar Visíveis</div>`;
+        listArea.innerHTML = `<div class="c04-check-item" style="font-weight:bold; border-bottom:1px solid #eee;" tabindex="0" id="c04-select-visibles"><input type="checkbox" id="c04-check-all" tabindex="-1"> Selecionar Visíveis</div>`;
         
         options.forEach(opt => {
             const item = document.createElement('div'); 
             item.className = `c04-check-item c04-colab-row`;
-            item.tabIndex = -1;
-            item.innerHTML = `<input type="checkbox" class="c04-cb-colab" value="${opt.id}" data-nome="${opt.nome}"> <span>${opt.nome}</span>`;
-            item.onclick = (e) => { 
-                if(e.target.tagName !== 'INPUT') { const cb=item.querySelector('input'); cb.checked=!cb.checked; }
-                document.getElementById('c04-search-list').value = '';
-                document.getElementById('c04-search-list').dispatchEvent(new Event('input'));
-                document.getElementById('c04-search-list').focus();
+            item.tabIndex = 0;
+            item.setAttribute('data-id', opt.id);
+            item.setAttribute('data-nome', opt.nome);
+            item.innerHTML = `<input type="checkbox" class="c04-cb-colab" value="${opt.id}" data-nome="${opt.nome}" tabindex="-1"> <span>${opt.nome}</span>`;
+            
+            // Lógica de Seleção Unificada
+            const doSelect = () => {
+                const cb = item.querySelector('input');
+                cb.checked = !cb.checked;
+                updateSelectedTags();
+                // Limpa busca e foca nela
+                const search = document.getElementById('c04-search-list');
+                search.value = '';
+                search.dispatchEvent(new Event('input'));
+                search.focus();
             };
+
+            item.onclick = (e) => { 
+                if(e.target.tagName !== 'INPUT') doSelect();
+                else { updateSelectedTags(); document.getElementById('c04-search-list').focus(); } // Se clicou direto no checkbox
+            };
+            
             item.onkeydown = (e) => {
-                if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.click(); } 
-                else if(e.key === 'ArrowDown') { e.preventDefault(); if(item.nextElementSibling) item.nextElementSibling.focus(); } 
-                else if(e.key === 'ArrowUp') { e.preventDefault(); if(item.previousElementSibling && item.previousElementSibling.className.includes('c04-check-item')) item.previousElementSibling.focus(); else document.getElementById('c04-search-list').focus(); }
+                if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSelect(); } 
+                else if(e.key === 'ArrowDown') { 
+                    e.preventDefault(); 
+                    let next = item.nextElementSibling;
+                    while(next && (next.style.display === 'none')) next = next.nextElementSibling;
+                    if(next) next.focus();
+                } 
+                else if(e.key === 'ArrowUp') { 
+                    e.preventDefault(); 
+                    let prev = item.previousElementSibling;
+                    while(prev && (prev.style.display === 'none')) prev = prev.previousElementSibling;
+                    
+                    if(prev && prev.classList.contains('c04-check-item')) prev.focus(); 
+                    else if (document.getElementById('c04-select-visibles').style.display !== 'none') document.getElementById('c04-select-visibles').focus();
+                    else document.getElementById('c04-search-list').focus();
+                }
             };
             listArea.appendChild(item);
         });
 
         document.getElementById('c04-check-all').onchange = (e) => {
              document.querySelectorAll('.c04-colab-row').forEach(r => { if(r.style.display!=='none') r.querySelector('input').checked = e.target.checked; });
+             updateSelectedTags();
+        };
+        
+        const headerSel = document.getElementById('c04-select-visibles');
+        headerSel.onkeydown = (e) => {
+            if(e.key === 'ArrowDown') { 
+                e.preventDefault(); 
+                const first = listArea.querySelector('.c04-colab-row:not([style*="none"])');
+                if(first) first.focus();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                document.getElementById('c04-search-list').focus();
+            } else if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                document.getElementById('c04-check-all').click();
+            }
         };
     }
 
+    function updateSelectedTags() {
+        const area = document.getElementById('c04-selected-tags');
+        if(!area) return;
+        const selected = Array.from(document.querySelectorAll('.c04-cb-colab:checked')).map(cb => ({id: cb.value, nome: cb.dataset.nome}));
+        if (selected.length === 0) { area.innerHTML = ''; return; }
+        area.innerHTML = selected.map(s => `<div class="c04-sel-chip">${s.nome.split(' ')[0]} <span class="c04-sel-remove" onclick="document.querySelector('.c04-cb-colab[value=\\'${s.id}\\']').click()">×</span></div>`).join('');
+    }
+
     function setupEvents(painel) {
-        document.getElementById('c04-close').onclick = () => painel.style.display = 'none';
+        document.getElementById('c04-close').onclick = () => window.killAllModules ? window.killAllModules() : destroyModule();
         document.getElementById('c04-ed-close').onclick = fecharEditor;
         
         const searchInput = document.getElementById('c04-search-list');
         const listArea = document.getElementById('c04-list-items');
 
         searchInput.oninput = (e) => {
-            const t = e.target.value.toLowerCase();
+            const term = Utils.normalize(e.target.value);
             document.querySelectorAll('.c04-colab-row').forEach(r => {
-                const span = r.querySelector('span');
-                r.style.display = span.innerText.toLowerCase().includes(t) ? 'flex' : 'none';
+                const name = Utils.normalize(r.dataset.nome);
+                r.style.display = name.includes(term) ? 'flex' : 'none';
             });
         };
 
         searchInput.onkeydown = (e) => {
-            if(e.key === 'ArrowDown') {
+            if (e.key === 'ArrowDown') {
                 e.preventDefault();
+                const header = document.getElementById('c04-select-visibles');
                 const first = listArea.querySelector('.c04-colab-row:not([style*="none"])');
-                if(first) first.focus();
-            } else if(e.key === 'Enter') {
+                // Se header visível foca nele, senão no primeiro item
+                if(header.style.display !== 'none') header.focus();
+                else if(first) first.focus();
+            } else if (e.key === 'Enter') {
                 e.preventDefault();
-                if(searchInput.value.trim() === '') document.getElementById('c04-btn-run').click();
-                else {
+                if(searchInput.value.trim() === '') {
+                    document.getElementById('c04-btn-run').click();
+                } else {
                     const first = listArea.querySelector('.c04-colab-row:not([style*="none"])');
-                    if(first) first.click();
+                    if(first) first.click(); // Já dispara o doSelect()
+                }
+            } else if (e.key === 'Delete') {
+                document.getElementById('c04-clear-list').click();
+            } else if (e.key === 'Escape') {
+                e.preventDefault(); // Evita perder foco da janela global
+                if(searchInput.value) { 
+                    searchInput.value = ''; 
+                    searchInput.dispatchEvent(new Event('input')); 
+                } else { 
+                    destroyModule(); 
                 }
             }
         };
 
-        // --- RESET COMPLETO (Correção) ---
         document.getElementById('c04-clear-list').onclick = () => {
             document.querySelectorAll('.c04-cb-colab').forEach(cb => cb.checked = false);
             document.getElementById('c04-check-all').checked = false;
-            document.getElementById('c04-search-list').value = '';
-            document.getElementById('c04-search-list').dispatchEvent(new Event('input'));
-            
-            // Limpa Resultados e Reseta Tamanho
-            document.getElementById('c04-results-wrapper').style.display = 'none';
-            document.getElementById('c04-results-wrapper').innerHTML = '';
-            painel.classList.remove('expanded');
-            State.dadosCache = [];
-            document.getElementById('c04-btn-zip').style.display = 'none';
-            document.getElementById('c04-status-text').innerText = "Pronto.";
-            
-            Utils.toast("Reset completo");
+            updateSelectedTags();
+            Utils.toast("Seleção limpa");
+            searchInput.focus();
         };
 
-        // --- ARRASTAR (Correção) ---
-        const header = document.getElementById('c04-header');
-        let isDragging = false;
-        let dragOffset = [0, 0];
-
-        header.onmousedown = (e) => {
-            e.preventDefault();
-            isDragging = true;
-            // IMPORTANTE: Remove o transform centralizado e fixa a posição absoluta atual
-            const rect = painel.getBoundingClientRect();
-            painel.style.transform = 'none';
-            painel.style.left = rect.left + 'px';
-            painel.style.top = rect.top + 'px';
-            
-            // Calcula o offset do mouse em relação ao canto do painel
-            dragOffset = [
-                e.clientX - rect.left,
-                e.clientY - rect.top
-            ];
-        };
-
-        document.onmouseup = () => isDragging = false;
-        document.onmousemove = (e) => {
-            if (isDragging) {
-                e.preventDefault();
-                painel.style.left = (e.clientX - dragOffset[0]) + 'px';
-                painel.style.top = (e.clientY - dragOffset[1]) + 'px';
-            }
-        };
-
-        // Atalhos do Modal
         document.getElementById('c04-prev-day').onclick = () => navegarDia(-1);
         document.getElementById('c04-next-day').onclick = () => navegarDia(1);
-        document.addEventListener('keydown', (e) => {
-            if (document.getElementById('c04-editor-overlay').style.display === 'flex') {
+
+        keydownHandler = (e) => {
+            const overlay = document.getElementById('c04-editor-overlay');
+            if (overlay && overlay.style.display === 'flex') {
                 if (e.key === 'Escape') { e.preventDefault(); fecharEditor(); } 
                 else if (e.shiftKey) {
                     if (e.key === 'ArrowLeft' || e.key === ',') { e.preventDefault(); navegarDia(-1); }
                     if (e.key === 'ArrowRight' || e.key === '.') { e.preventDefault(); navegarDia(1); }
                 }
+            } else {
+                // Se o foco NÃO estiver no input, ESC fecha
+                if (e.key === 'Escape' && document.activeElement !== searchInput) {
+                    destroyModule();
+                }
             }
-        });
+        };
+        document.addEventListener('keydown', keydownHandler);
+
+        const header = document.getElementById('c04-header');
+        header.onmousedown = (e) => {
+            e.preventDefault();
+            let startX = e.clientX, startY = e.clientY, startLeft = painel.offsetLeft, startTop = painel.offsetTop;
+            const onMove = (evt) => {
+                const dx = evt.clientX - startX, dy = evt.clientY - startY;
+                painel.style.left = (startLeft + dx) + 'px'; painel.style.top = (startTop + dy) + 'px'; painel.style.transform = 'none'; 
+            };
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+        };
 
         document.getElementById('c04-btn-run').onclick = runProcess;
     }
@@ -429,10 +454,7 @@
         let headersTop = `<th colspan="3"></th>`;
         let headersBot = `<th width="60">Ações</th><th>Data</th><th>Dia</th>`;
         
-        for(let i=1; i<=maxB; i++) {
-            headersTop += `<th></th>`;
-            headersBot += `<th>H${i}</th>`;
-        }
+        for(let i=1; i<=maxB; i++) { headersTop += `<th></th>`; headersBot += `<th>H${i}</th>`; }
         headersTop += `<th style="text-align:center"><button class="c04-btn-copy-mini" title="Copiar Coluna">📋 Copiar</button></th><th></th>`;
         headersBot += `<th>Total</th><th>Status</th>`;
 
@@ -442,23 +464,19 @@
 
         const html = `
             <div class="c04-card-res" id="${cardId}">
-                <div class="c04-res-header">
-                    <div><b>${colab.nome}</b> (${mes})</div>
-                </div>
+                <div class="c04-res-header"><div><b>${colab.nome}</b> (${mes})</div></div>
                 <div style="overflow-x:auto;">
                     <table class="c04-table" data-maxb="${maxB}">
                         <thead><tr style="height:10px;">${headersTop}</tr><tr>${headersBot}</tr></thead>
                         <tbody>${dados.map((d, index) => buildRowHTML(d, maxB, index)).join('')}</tbody>
                     </table>
                 </div>
-            </div>
-        `;
+            </div>`;
         
         const tempDiv = document.createElement('div'); tempDiv.innerHTML = html;
         const finalCard = tempDiv.firstElementChild;
         container.appendChild(finalCard);
         
-        // Binds
         finalCard.querySelectorAll('.c04-btn-edit').forEach(btn => {
             btn.onclick = () => {
                 const obj = JSON.parse(decodeURIComponent(btn.dataset.json));
@@ -468,10 +486,7 @@
         });
         
         finalCard.querySelectorAll('.c04-btn-del-mini').forEach(btn => {
-            btn.onclick = () => {
-                const obj = JSON.parse(decodeURIComponent(btn.dataset.json));
-                excluirDiaInteiro(obj);
-            };
+            btn.onclick = () => { const obj = JSON.parse(decodeURIComponent(btn.dataset.json)); excluirDiaInteiro(obj); };
         });
 
         finalCard.querySelector('.c04-btn-copy-mini').onclick = () => {
@@ -501,17 +516,13 @@
         </tr>`;
     }
 
-    // --- EDITOR LOGIC ---
     function abrirEditor(dado, index) {
-        State.editandoAgora = dado;
-        State.currentIndex = index;
+        State.editandoAgora = dado; State.currentIndex = index;
         const overlay = document.getElementById('c04-editor-overlay');
         const content = document.getElementById('c04-ed-content');
-        
         document.getElementById('c04-ed-title').innerText = `${dado.data} (${dado.dia})`;
         renderConteudoEditor(content, dado);
         overlay.style.display = 'flex';
-        
         setTimeout(() => document.getElementById('new-time')?.focus(), 100);
     }
     
@@ -521,17 +532,12 @@
         const newIdx = State.currentIndex + dir;
         if(newIdx >= 0 && newIdx < State.dadosCache.length) {
             const novoDado = State.dadosCache[newIdx];
-            if(novoDado.colabId === State.editandoAgora.colabId) {
-                abrirEditor(novoDado, newIdx);
-            } else {
-                Utils.toast("Fim da lista do colaborador.");
-            }
+            if(novoDado.colabId === State.editandoAgora.colabId) { abrirEditor(novoDado, newIdx); } else { Utils.toast("Fim da lista do colaborador."); }
         }
     }
 
     function renderConteudoEditor(container, dado) {
         container.innerHTML = '';
-        
         if(dado.horariosFull.length > 0) {
             const btnClear = document.createElement('button');
             btnClear.className = 'c04-btn c04-btn-danger';
@@ -554,14 +560,12 @@
             `;
             const input = row.querySelector('input');
             input.onblur = async () => { if(input.value !== h.val) { await execIframeFunc('alterarHorarioPonto', h.id, input.value); Utils.toast("Salvo"); atualizarLinhaDados(); } };
-            
             const btnDel = row.querySelector('button');
             btnDel.onclick = async () => { await excluirPontoViaAjax(h.id); Utils.toast("Removido"); atualizarLinhaDados(); };
             container.appendChild(row);
         });
 
         const nextType = (dado.horariosFull.length % 2 === 0) ? '1' : '2'; 
-        
         const addDiv = document.createElement('div'); addDiv.className = 'c04-add-area';
         addDiv.innerHTML = `
             <div class="c04-add-row">
@@ -570,20 +574,13 @@
                 <button class="c04-btn c04-btn-primary" style="width:auto;" id="btn-add-ok">+</button>
             </div>`;
         container.appendChild(addDiv);
-        
         document.getElementById('new-type').value = nextType;
         const inputTime = document.getElementById('new-time');
         const btnAdd = document.getElementById('btn-add-ok');
-
-        inputTime.onkeydown = (e) => {
-            if(e.key === 'Enter') { e.preventDefault(); btnAdd.click(); }
-        };
-
+        inputTime.onkeydown = (e) => { if(e.key === 'Enter') { e.preventDefault(); btnAdd.click(); } };
         btnAdd.onclick = async () => {
-            const timeVal = inputTime.value;
-            const typeVal = document.getElementById('new-type').value;
+            const timeVal = inputTime.value; const typeVal = document.getElementById('new-type').value;
             if(!timeVal) return;
-            
             inputTime.disabled = true;
             await inserirPontoViaAjax(dado.colabId, dado.idUnidade, dado.iso, timeVal, typeVal);
             await atualizarLinhaDados(); 
@@ -591,8 +588,7 @@
     }
 
     async function excluirDiaInteiro(dado) {
-        // Sem Confirm = Ação Direta
-        Utils.toast("Limpando...", "info");
+        Utils.toast("Limpando dia...", "info");
         const promises = dado.horariosFull.map(h => excluirPontoViaAjax(h.id));
         await Promise.all(promises);
         Utils.toast("Dia limpo!", "success");
@@ -612,12 +608,10 @@
         if(dadoAtualizado) {
             State.dadosCache[State.currentIndex] = dadoAtualizado;
             State.editandoAgora = dadoAtualizado;
-            
             if(document.getElementById('c04-editor-overlay').style.display !== 'none') {
                 renderConteudoEditor(document.getElementById('c04-ed-content'), dadoAtualizado);
                 setTimeout(() => document.getElementById('new-time')?.focus(), 100);
             }
-            
             const row = document.getElementById(`row-${dadoAtualizado.colabId}-${dadoAtualizado.iso}`);
             if(row) {
                 const table = row.closest('table');
@@ -630,7 +624,6 @@
                     const temp = document.createElement('tbody'); temp.innerHTML = newHTML;
                     row.innerHTML = temp.firstElementChild.innerHTML;
                     row.className = temp.firstElementChild.className;
-                    
                     const newBtn = row.querySelector('.c04-btn-edit');
                     newBtn.onclick = () => {
                         const obj = JSON.parse(decodeURIComponent(newBtn.dataset.json));
@@ -643,12 +636,10 @@
         }
     }
 
-    // --- AJAX CALLS ---
     function execIframeFunc(funcName, ...args) {
         return new Promise(resolve => {
             const win = State.iframe.contentWindow;
-            if(win && win[funcName]) { win[funcName](...args); setTimeout(resolve, 800); } 
-            else { resolve(); }
+            if(win && win[funcName]) { win[funcName](...args); setTimeout(resolve, 800); } else { resolve(); }
         });
     }
 
@@ -659,8 +650,7 @@
             win.$.ajax({
                 type: "POST", url: CONFIG.urlInserir,
                 data: { tipoPonto: tipo, dataDataPonto: dataIso, timeDataPonto: hora, idPessoa: idPessoa, idUnidade: idUnidade },
-                success: function() { resolve(); },
-                error: function() { Utils.toast("Erro insert", "error"); resolve(); }
+                success: function() { resolve(); }, error: function() { Utils.toast("Erro insert", "error"); resolve(); }
             });
         });
     }
@@ -695,5 +685,7 @@
     }
     
     function gerarMeses(i,f){let c=new Date(i+'-02'),e=new Date(f+'-02'),l=[];while(c<=e){l.push(c.toISOString().slice(0,7));c.setMonth(c.getMonth()+1);}return l;}
+    
+    window.addEventListener('c04_global_teardown', destroyModule);
     window.addEventListener('c04_open_ponto', initModule);
 })();
