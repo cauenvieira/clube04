@@ -117,6 +117,8 @@ async function initEnvironment() {
         });
         const container = document.getElementById('c04-fab-container');
         if (container) container.remove();
+        const devBadge = document.getElementById('c04-dev-mode-badge');
+        if (devBadge) devBadge.remove();
         console.log("🧹 [SUITE] Limpeza completa.");
     }
 

@@ -41,10 +41,10 @@ test("prefixes hashes so Sheets keeps identifiers as text", () => {
 test("classifies recurrence limits", () => {
     assert.equal(core.recurrence(7).label, "Excelente");
     assert.equal(core.recurrence(8).label, "Bom");
-    assert.equal(core.recurrence(15).label, "Bom");
-    assert.equal(core.recurrence(16).label, "Precisa melhorar");
-    assert.equal(core.recurrence(30).label, "Precisa melhorar");
-    assert.equal(core.recurrence(31).label, "Ruim");
+    assert.equal(core.recurrence(14).label, "Bom");
+    assert.equal(core.recurrence(15).label, "Baixo");
+    assert.equal(core.recurrence(21).label, "Baixo");
+    assert.equal(core.recurrence(22).label, "Ruim");
     assert.equal(core.recurrence(null).label, "Dados insuficientes");
 });
 
@@ -57,7 +57,7 @@ test("computes interval and weighted score using ticket reference", () => {
     assert.equal(customers[0].components.ticket, 100);
     assert.equal(customers[1].components.recurrence, 0);
     assert.equal(customers[1].score, 50);
-    assert.equal(customers[1].recurrence.label, "Primeira visita");
+    assert.equal(customers[1].recurrence.label, "Única visita no período");
     assert.equal(customers[1].scoreConfidence, "low");
 });
 
@@ -66,8 +66,8 @@ test("default period starts four months before today", () => {
 });
 
 test("supports configurable recurrence limits", () => {
-    assert.equal(core.recurrence(10, { excellent: 10, good: 20, improve: 40 }).label, "Excelente");
-    assert.equal(core.recurrence(35, { excellent: 10, good: 20, improve: 40 }).label, "Precisa melhorar");
+    assert.equal(core.recurrence(10, { excellent: 10, good: 20, low: 40, bad: 60 }).label, "Excelente");
+    assert.equal(core.recurrence(35, { excellent: 10, good: 20, low: 40, bad: 60 }).label, "Baixo");
 });
 
 test("parses recurrence frequency supplied by relcliente", () => {
@@ -105,6 +105,18 @@ test("summarizes and exports a regional selection", () => {
         frequencyAverage: 0, frequencyMedian: 0,
         recurrenceCounts: { Excelente: 1 } });
     assert.match(core.toCsv(rows), /"Ana";"1";"Rua A"/);
+});
+
+test("summarizes regional selection excluding single-visit customers from frequency statistics", () => {
+    const rows = [
+        { name: "Ana", visits: 3, intervalDays: 10, spend: 500, ticket: 250, score: 80, recurrence: { label: "Excelente" } },
+        { name: "Beto", visits: 1, intervalDays: 30, spend: 100, ticket: 100, score: 40, recurrence: { label: "Única visita no período" } }
+    ];
+    const summary = core.selectionSummary(rows);
+    assert.equal(summary.count, 2);
+    // Beto should be excluded from frequencies because visits < 2
+    assert.equal(summary.frequencyAverage, 10);
+    assert.equal(summary.frequencyMedian, 10);
 });
 
 test("extracts idPessoa and requires it as the customer key", () => {

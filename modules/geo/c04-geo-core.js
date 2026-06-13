@@ -127,9 +127,9 @@
         return total / (sorted.length - 1);
     }
     function recurrence(interval, limits) {
-        limits = limits || { excellent: 7, good: 15, improve: 30 };
+        limits = limits || { excellent: 7, good: 14, low: 21, bad: 28 };
         if (interval == null) return { label: "Dados insuficientes", score: 0 };
-        const anchors = [[0, 100], [limits.excellent, 85], [limits.good, 60], [limits.improve, 25], [Math.max(60, limits.improve * 2), 0]];
+        const anchors = [[0, 100], [limits.excellent, 85], [limits.good, 60], [limits.low, 40], [limits.bad, 20], [Math.max(60, limits.bad * 2), 0]];
         let score = 0;
         for (let i = 1; i < anchors.length; i += 1) {
             if (interval <= anchors[i][0]) {
@@ -138,7 +138,7 @@
             }
         }
         const label = interval <= limits.excellent ? "Excelente" : interval <= limits.good ? "Bom" :
-            interval <= limits.improve ? "Precisa melhorar" : "Ruim";
+            interval <= limits.low ? "Baixo" : "Ruim";
         return { label, score: Math.max(0, Math.min(100, score)) };
     }
     function percentileRanks(values) {
@@ -150,7 +150,7 @@
         return customers.map((item) => {
             const interval = Number.isFinite(item.intervalDays) ? item.intervalDays : averageIntervalDays(item.visitDates || []);
             const singleVisit = Number(item.visits) === 1;
-            const recurrenceInfo = singleVisit ? { label: "Primeira visita", score: 0 } : recurrence(interval, limits);
+            const recurrenceInfo = singleVisit ? { label: "Única visita no período", score: 0 } : recurrence(interval, limits);
             const ticketScore = Math.min(100, Math.round(100 * (item.ticket || 0) / ticketReference));
             const components = { recurrence: recurrenceInfo.score, ticket: ticketScore };
             const denominator = singleVisit ? weights.ticket || 1 : totalWeight;
@@ -189,7 +189,7 @@
     function selectionSummary(customers) {
         const count = customers.length;
         const sum = (key) => customers.reduce((total, item) => total + (Number(item[key]) || 0), 0);
-        const frequencies = customers.map(item => Number(item.intervalDays)).filter(Number.isFinite).sort((a, b) => a - b);
+        const frequencies = customers.filter(item => Number(item.visits) >= 2).map(item => Number(item.intervalDays)).filter(Number.isFinite).sort((a, b) => a - b);
         const frequencyAverage = frequencies.length ? frequencies.reduce((total, value) => total + value, 0) / frequencies.length : 0;
         const middle = Math.floor(frequencies.length / 2);
         const frequencyMedian = frequencies.length ? (frequencies.length % 2 ? frequencies[middle] :

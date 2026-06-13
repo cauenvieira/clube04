@@ -56,6 +56,7 @@
         APPS_SCRIPT_URL && APPS_SCRIPT_SECRET && !APPS_SCRIPT_URL.startsWith("REPLACE_") ? "true" : "false");
     function showDevBadge() {
         const badge = document.createElement("div");
+        badge.id = "c04-dev-mode-badge";
         badge.textContent = "🔧 DEV MODE";
         badge.style.cssText = "position:fixed;bottom:35px;right:110px;background:#ff0055;color:#fff;padding:6px 12px;border-radius:20px;font:700 11px monospace;z-index:100000;pointer-events:none";
         document.body.appendChild(badge);

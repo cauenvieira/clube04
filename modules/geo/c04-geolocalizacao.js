@@ -6,14 +6,31 @@
     const esc = value => root.C04GeoCore.escapeHtml(value);
     function visibleUser() { return root.C04GeoCore.visibleUser(document); }
     function migrateLegacySettings(settings) {
-        if (!settings || !settings.weights || settings.weights.spend == null) return settings;
-        settings.weights = { recurrence: 60, ticket: 40 };
-        settings.colors = Object.assign({}, settings.colors, {
-            clientPin: "#343434", storePin: "#f97316", cluster: "#3f3f46",
-            scoreLow: "#7f1d1d", scoreMedium: "#c2410c", scoreGood: "#f97316", scoreHigh: "#fb923c",
-            heatVisitsLow: "#ffedd5", heatVisitsHigh: "#ea580c", heatSpendLow: "#fed7aa", heatSpendHigh: "#9a3412",
-            heatScoreLow: "#fff7ed", heatScoreHigh: "#f97316"
-        });
+        if (!settings) return settings;
+        if (settings.weights && settings.weights.spend != null) {
+            settings.weights = { recurrence: 60, ticket: 40 };
+        }
+        if (settings.recurrenceLimits && settings.recurrenceLimits.improve != null) {
+            settings.recurrenceLimits.low = settings.recurrenceLimits.improve;
+            settings.recurrenceLimits.bad = 28;
+            delete settings.recurrenceLimits.improve;
+        }
+        if (settings.colors) {
+            const defaults = root.C04GeoConfig.colors;
+            settings.colors = Object.assign({}, defaults, settings.colors);
+            if (settings.colors.heatVisitsLow && !settings.colors.heatVisitsMedium) {
+                settings.colors.heatVisitsMedium = defaults.heatVisitsMedium;
+                settings.colors.heatVisitsGood = defaults.heatVisitsGood;
+            }
+            if (settings.colors.heatSpendLow && !settings.colors.heatSpendMedium) {
+                settings.colors.heatSpendMedium = defaults.heatSpendMedium;
+                settings.colors.heatSpendGood = defaults.heatSpendGood;
+            }
+            if (settings.colors.heatScoreLow && !settings.colors.heatScoreMedium) {
+                settings.colors.heatScoreMedium = defaults.heatScoreMedium;
+                settings.colors.heatScoreGood = defaults.heatScoreGood;
+            }
+        }
         return settings;
     }
     function baseUrl() {
@@ -59,13 +76,18 @@
         #c04-geo-head .c04-icon-btn { width: 28px; height: 28px; padding: 0; border-radius: 6px; font-size: 11px; }
         .c04-icon-btn { width: 30px; height: 30px; padding: 0; border-radius: 8px; font-size: 13px; }
         #c04-toggle-head { position: absolute; right: 56px; top: 7px; }
-        #c04-geo-close { position: absolute; right: 12px; top: 7px; width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(220, 38, 38, 0.4); background: rgba(220, 38, 38, 0.2); color: #fca5a5; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        #c04-geo-close { position: absolute; right: 12px; top: 7px; width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(220, 38, 38, 0.4); background: rgba(220, 38, 38, 0.2); color: #fca5a5; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; z-index: 1001; }
         #c04-geo-close:hover { background: #dc2626; color: #fff; border-color: #dc2626; }
-        #c04-open-head { position: absolute; top: 12px; right: 12px; z-index: 100; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1); display: none; }
+        #c04-open-head { position: absolute; top: 7px; right: 48px; width: 28px; height: 28px; z-index: 1001; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1); display: none; padding: 0; align-items: center; justify-content: center; }
         #c04-geo-panel[data-head-closed="true"] #c04-open-head { display: flex; }
+        #c04-geo-panel[data-head-closed="true"] #c04-fullscreen-container { margin-top: 42px !important; }
         #c04-geo-main { position: relative; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 1fr); overflow: hidden; }
         #c04-geo-main.sidebar-closed { grid-template-columns: 0 minmax(0, 1fr); }
-        #c04-geo-sidebar { position: relative; background: linear-gradient(180deg, #1e293b, #0f172a); border-right: 1px solid rgba(255, 255, 255, 0.05); padding: 40px 16px 16px; overflow-y: auto; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); min-width: 0; z-index: 9; }
+        #c04-geo-sidebar { position: relative; background: linear-gradient(180deg, #1e293b, #0f172a); border-right: 1px solid rgba(255, 255, 255, 0.05); padding: 40px 16px 16px; overflow-y: auto; overflow-x: hidden; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); min-width: 0; z-index: 9; }
+        #c04-geo-sidebar::-webkit-scrollbar { width: 6px; }
+        #c04-geo-sidebar::-webkit-scrollbar-track { background: rgba(0,0,0,0.05); }
+        #c04-geo-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        #c04-geo-sidebar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
         #c04-geo-main.sidebar-closed #c04-geo-sidebar { padding: 0; border: 0; overflow: visible; width: 0; }
         #c04-toggle-sidebar { position: absolute; right: 12px; top: 10px; z-index: 1000; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); }
         #c04-geo-main.sidebar-closed #c04-toggle-sidebar { right: -42px; background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 4px 0 10px rgba(0,0,0,0.3); }
@@ -85,12 +107,12 @@
         .c04-info { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 50%; font-size: 8px; font-weight: bold; color: rgba(255, 255, 255, 0.5); cursor: help; vertical-align: middle; }
         #c04-geo-map { width: 100%; height: 100%; min-height: 0; }
         #c04-geo-progress { left: 50%; bottom: 36px; display: none; }
-        .c04-check-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
-        .c04-check-grid label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cbd5e1; cursor: pointer; }
+        .c04-check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+        .c04-check-grid label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .c04-check-grid input[type="checkbox"] { accent-color: #f97316; }
         .c04-filter label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #cbd5e1; margin-bottom: 12px; }
         .c04-filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .c04-filter-row input { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; color: #fff; padding: 6px; font-size: 12px; outline: none; }
+        .c04-filter-row input { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; color: #fff; padding: 6px; font-size: 12px; outline: none; width: 100%; min-width: 0; }
         .c04-filter-row input:focus { border-color: #f97316; }
         input[type="color"] { -webkit-appearance: none; -moz-appearance: none; appearance: none; width: 22px; height: 22px; border: none; border-radius: 50%; cursor: pointer; background: none; padding: 0; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.3); transition: transform 0.15s ease; }
         input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
@@ -107,7 +129,9 @@
         .c04-tab-panel { display: none; }
         .c04-tab-panel.active { display: block; }
         .c04-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
-        .c04-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #cbd5e1; }
+        .c04-label-title { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+        .c04-settings-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #cbd5e1; }
+        .c04-settings-label.c04-color-setting { flex-direction: row; align-items: center; justify-content: space-between; }
         .c04-grid input:not([type="color"]) { background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fff; padding: 8px 12px; font-size: 13px; outline: none; }
         .c04-grid input:not([type="color"]):focus { border-color: #f97316; }
         .c04-heatmap-general { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 20px; }
@@ -154,18 +178,31 @@
     function configFromForm() {
         const number = id => Number(document.getElementById(id).value);
         return { franchiseAverageTicket: number("c04-ticket"), weights: { recurrence: number("c04-w-rec"), ticket: number("c04-w-ticket") },
-            recurrenceLimits: { excellent: number("c04-r-ex"), good: number("c04-r-good"), improve: number("c04-r-improve") },
+            recurrenceLimits: { excellent: number("c04-r-ex"), good: number("c04-r-good"), low: number("c04-r-low"), bad: number("c04-r-bad") },
             clusterRadius: number("c04-cluster"), heatmaps: { opacity: number("c04-opacity"), radius: number("c04-radius"), intensity: number("c04-intensity") },
             colors: { clientPin: document.getElementById("c04-color-client").value, storePin: document.getElementById("c04-color-store").value,
                 cluster: document.getElementById("c04-color-cluster").value, scoreLow: document.getElementById("c04-color-low").value,
                 scoreMedium: document.getElementById("c04-color-medium").value, scoreGood: document.getElementById("c04-color-good").value,
-                scoreHigh: document.getElementById("c04-color-high").value, heatVisitsLow: document.getElementById("c04-heat-visits-low").value,
-                heatVisitsHigh: document.getElementById("c04-heat-visits-high").value, heatSpendLow: document.getElementById("c04-heat-spend-low").value,
-                heatSpendHigh: document.getElementById("c04-heat-spend-high").value, heatScoreLow: document.getElementById("c04-heat-score-low").value,
-                heatScoreHigh: document.getElementById("c04-heat-score-high").value } };
+                scoreHigh: document.getElementById("c04-color-high").value,
+                heatVisitsLow: document.getElementById("c04-heat-visits-low").value,
+                heatVisitsMedium: document.getElementById("c04-heat-visits-medium").value,
+                heatVisitsGood: document.getElementById("c04-heat-visits-good").value,
+                heatVisitsHigh: document.getElementById("c04-heat-visits-high").value,
+                heatSpendLow: document.getElementById("c04-heat-spend-low").value,
+                heatSpendMedium: document.getElementById("c04-heat-spend-medium").value,
+                heatSpendGood: document.getElementById("c04-heat-spend-good").value,
+                heatSpendHigh: document.getElementById("c04-heat-spend-high").value,
+                heatScoreLow: document.getElementById("c04-heat-score-low").value,
+                heatScoreMedium: document.getElementById("c04-heat-score-medium").value,
+                heatScoreGood: document.getElementById("c04-heat-score-good").value,
+                heatScoreHigh: document.getElementById("c04-heat-score-high").value,
+                heatDensityLow: document.getElementById("c04-heat-density-low").value,
+                heatDensityMedium: document.getElementById("c04-heat-density-medium").value,
+                heatDensityGood: document.getElementById("c04-heat-density-good").value,
+                heatDensityHigh: document.getElementById("c04-heat-density-high").value } };
     }
     function layerState() {
-        return Object.fromEntries(["pins", "cluster", "visits", "spend", "score"].map(key => [key, document.getElementById(`c04-layer-${key}`).checked]));
+        return Object.fromEntries(["pins", "cluster", "visits", "spend", "score", "density"].map(key => [key, document.getElementById(`c04-layer-${key}`).checked]));
     }
     function score() {
         const c = root.C04GeoConfig;
@@ -512,7 +549,10 @@
         document.getElementById("c04-full-modal").classList.add("open");
     }
     function restoreFullscreenState(panel) {
-        document.getElementById("c04-geo-main").classList.toggle("sidebar-closed", panel.dataset.sidebarClosed === "true");
+        const closed = panel.dataset.sidebarClosed === "true";
+        document.getElementById("c04-geo-main").classList.toggle("sidebar-closed", closed);
+        const toggleBtn = document.getElementById("c04-toggle-sidebar");
+        if (toggleBtn) toggleBtn.innerHTML = closed ? "&gt;" : "&lt;";
         document.getElementById("c04-geo-head").classList.toggle("head-closed", panel.dataset.headClosed === "true");
         document.getElementById("c04-geo-progress").classList.toggle("compact", panel.dataset.progressClosed === "true");
     }
@@ -523,7 +563,8 @@
         setVal("c04-w-ticket", c.weights.ticket);
         setVal("c04-r-ex", c.recurrenceLimits.excellent);
         setVal("c04-r-good", c.recurrenceLimits.good);
-        setVal("c04-r-improve", c.recurrenceLimits.improve);
+        setVal("c04-r-low", c.recurrenceLimits.low);
+        setVal("c04-r-bad", c.recurrenceLimits.bad);
         setVal("c04-cluster", c.clusterRadius);
         setVal("c04-opacity", c.heatmaps.opacity);
         setVal("c04-radius", c.heatmaps.radius);
@@ -537,11 +578,21 @@
             setVal("c04-color-good", c.colors.scoreGood);
             setVal("c04-color-high", c.colors.scoreHigh);
             setVal("c04-heat-visits-low", c.colors.heatVisitsLow);
+            setVal("c04-heat-visits-medium", c.colors.heatVisitsMedium);
+            setVal("c04-heat-visits-good", c.colors.heatVisitsGood);
             setVal("c04-heat-visits-high", c.colors.heatVisitsHigh);
             setVal("c04-heat-spend-low", c.colors.heatSpendLow);
+            setVal("c04-heat-spend-medium", c.colors.heatSpendMedium);
+            setVal("c04-heat-spend-good", c.colors.heatSpendGood);
             setVal("c04-heat-spend-high", c.colors.heatSpendHigh);
             setVal("c04-heat-score-low", c.colors.heatScoreLow);
+            setVal("c04-heat-score-medium", c.colors.heatScoreMedium);
+            setVal("c04-heat-score-good", c.colors.heatScoreGood);
             setVal("c04-heat-score-high", c.colors.heatScoreHigh);
+            setVal("c04-heat-density-low", c.colors.heatDensityLow);
+            setVal("c04-heat-density-medium", c.colors.heatDensityMedium);
+            setVal("c04-heat-density-good", c.colors.heatDensityGood);
+            setVal("c04-heat-density-high", c.colors.heatDensityHigh);
         }
     }
     function bind() {
@@ -571,6 +622,8 @@
                 panel.dataset.headClosed = document.getElementById("c04-geo-head").classList.contains("head-closed");
                 panel.dataset.progressClosed = document.getElementById("c04-geo-progress").classList.contains("compact");
                 document.getElementById("c04-geo-main").classList.add("sidebar-closed");
+                const toggleBtn = document.getElementById("c04-toggle-sidebar");
+                if (toggleBtn) toggleBtn.innerHTML = "&gt;";
                 panel.dataset.headClosed = "true";
                 document.getElementById("c04-geo-head").classList.add("head-closed");
                 document.getElementById("c04-geo-progress").classList.add("compact");
@@ -580,8 +633,12 @@
             setTimeout(() => root.C04GeoMap.resize(), 250);
         };
         fullscreenHandler = () => {
-            const panel = document.getElementById("c04-geo-panel"); if (!panel || document.fullscreenElement) return;
-            restoreFullscreenState(panel);
+            const panel = document.getElementById("c04-geo-panel"); if (!panel) return;
+            const isFullscreen = !!document.fullscreenElement;
+            if (!isFullscreen) {
+                restoreFullscreenState(panel);
+            }
+            window.dispatchEvent(new CustomEvent("c04_fullscreen_changed", { detail: { isFullscreen } }));
             setTimeout(() => root.C04GeoMap.resize(), 250);
         };
         document.addEventListener("fullscreenchange", fullscreenHandler);
@@ -593,18 +650,72 @@
             button.classList.add("active"); document.getElementById(button.dataset.tab).classList.add("active");
         }; });
         document.querySelectorAll(".c04-modal-close").forEach(button => { button.onclick = () => button.closest(".c04-modal").classList.remove("open"); });
-        document.querySelectorAll("[id^=c04-layer-]").forEach(input => { input.onchange = () => { if (customers.length) render(); else root.C04GeoMap.setLayers(layerState()); }; });
+        
+        // Mutually exclusive heatmap layers
+        const heatmaps = ["visits", "spend", "score", "density"];
+        document.querySelectorAll("[id^=c04-layer-]").forEach(input => {
+            input.onchange = () => {
+                const isHeatmap = heatmaps.some(h => input.id === `c04-layer-${h}`);
+                if (isHeatmap && input.checked) {
+                    heatmaps.forEach(h => {
+                        if (`c04-layer-${h}` !== input.id) {
+                            const otherEl = document.getElementById(`c04-layer-${h}`);
+                            if (otherEl) otherEl.checked = false;
+                        }
+                    });
+                }
+                saveSidebarPreferences();
+                if (customers.length) render();
+                else root.C04GeoMap.setLayers(layerState());
+            };
+        });
+        
+        // Weight sync inputs
+        const wRec = document.getElementById("c04-w-rec");
+        const wTicket = document.getElementById("c04-w-ticket");
+        if (wRec && wTicket) {
+            wRec.oninput = () => {
+                let val = Number(wRec.value) || 0;
+                if (val < 0) val = 0;
+                if (val > 100) val = 100;
+                wRec.value = val;
+                wTicket.value = 100 - val;
+            };
+            wTicket.oninput = () => {
+                let val = Number(wTicket.value) || 0;
+                if (val < 0) val = 0;
+                if (val > 100) val = 100;
+                wTicket.value = val;
+                wRec.value = 100 - val;
+            };
+        }
+
         document.querySelectorAll("[data-select]").forEach(button => { button.onclick = () => root.C04GeoMap.select(button.dataset.select, selectionChanged); });
         document.getElementById("c04-clear-selection").onclick = () => { root.C04GeoMap.clearSelection(); selectionChanged([]); };
+        
         keydownHandler = event => {
-            if (event.key !== "Escape") return; const info = root.C04GeoMap.selectionInfo();
+            if (event.key !== "Escape") return;
+            const openModal = document.querySelector(".c04-modal.open");
+            if (openModal) {
+                event.preventDefault(); event.stopImmediatePropagation();
+                openModal.classList.remove("open");
+                return;
+            }
+            const info = root.C04GeoMap.selectionInfo();
             if (info.selections.length) {
                 event.preventDefault(); event.stopImmediatePropagation();
                 root.C04GeoMap.removeSelection(info.selections[info.selections.length - 1].id);
             }
         };
         document.addEventListener("keydown", keydownHandler, true);
-        document.querySelectorAll("[data-filter]").forEach(input => { input.oninput = () => { if (customers.length) render(); }; });
+        
+        document.querySelectorAll("[data-filter]").forEach(input => {
+            input.oninput = () => {
+                saveSidebarPreferences();
+                if (customers.length) render();
+            };
+        });
+
         document.getElementById("c04-test-connection").onclick = () => diagnostic("healthCheck");
         document.getElementById("c04-test-map").onclick = () => showDiagnostic("Mapa e APIs", root.C04GeoMap.diagnostics());
         document.getElementById("c04-test-general").onclick = generalDiagnostic;
@@ -635,6 +746,113 @@
         };
         document.querySelectorAll("[data-transport]").forEach(input => { input.onchange = () => root.C04GeoMap.setTransport(input.dataset.transport, input.checked); });
         document.getElementById("c04-satellite").onchange = event => root.C04GeoMap.setMapType(event.target.checked ? "satellite" : "roadmap");
+
+        const PALETTES = {
+            visits: {
+                orange: ["#ffedd5", "#fed7aa", "#f97316", "#ea580c"],
+                purple: ["#f3e8ff", "#d8b4fe", "#a855f7", "#7e22ce"],
+                blue:   ["#e0f2fe", "#7dd3fc", "#3b82f6", "#1e3a8a"]
+            },
+            spend: {
+                blue:   ["#e0f2fe", "#7dd3fc", "#3b82f6", "#1e3a8a"],
+                green:  ["#dcfce7", "#86efac", "#22c55e", "#15803d"],
+                orange: ["#ffedd5", "#fed7aa", "#f97316", "#ea580c"]
+            },
+            score: {
+                traffic: ["#dc2626", "#fb923c", "#4ade80", "#16a34a"],
+                sunset:  ["#7f1d1d", "#c2410c", "#f97316", "#fb923c"],
+                ocean:   ["#4c1d95", "#2563eb", "#06b6d4", "#0d9488"]
+            },
+            density: {
+                purple: ["#f3e8ff", "#c084fc", "#a855f7", "#7e22ce"],
+                orange: ["#ffedd5", "#fed7aa", "#f97316", "#ea580c"],
+                blue:   ["#e0f2fe", "#7dd3fc", "#3b82f6", "#1e3a8a"]
+            }
+        };
+
+        const updateSelectFromColors = () => {
+            const getVal = id => { const el = document.getElementById(id); return el ? el.value.toLowerCase() : ""; };
+            
+            const mLow = getVal("c04-color-low"), mMed = getVal("c04-color-medium"), mGood = getVal("c04-color-good"), mHigh = getVal("c04-color-high");
+            let mPreset = "custom";
+            if (mLow === "#dc2626" && mMed === "#fb923c" && mGood === "#4ade80" && mHigh === "#16a34a") mPreset = "traffic";
+            else if (mLow === "#7f1d1d" && mMed === "#c2410c" && mGood === "#f97316" && mHigh === "#fb923c") mPreset = "sunset";
+            else if (mLow === "#4c1d95" && mMed === "#2563eb" && mGood === "#06b6d4" && mHigh === "#0d9488") mPreset = "ocean";
+            const mSelect = document.getElementById("c04-preset-marker-score");
+            if (mSelect) mSelect.value = mPreset;
+
+            const vLow = getVal("c04-heat-visits-low"), vMed = getVal("c04-heat-visits-medium"), vGood = getVal("c04-heat-visits-good"), vHigh = getVal("c04-heat-visits-high");
+            let vPreset = "custom";
+            if (vLow === "#ffedd5" && vMed === "#fed7aa" && vGood === "#f97316" && vHigh === "#ea580c") vPreset = "orange";
+            else if (vLow === "#f3e8ff" && vMed === "#d8b4fe" && vGood === "#a855f7" && vHigh === "#7e22ce") vPreset = "purple";
+            else if (vLow === "#e0f2fe" && vMed === "#7dd3fc" && vGood === "#3b82f6" && vHigh === "#1e3a8a") vPreset = "blue";
+            const vSelect = document.getElementById("c04-preset-visits-palette");
+            if (vSelect) vSelect.value = vPreset;
+
+            const sLow = getVal("c04-heat-spend-low"), sMed = getVal("c04-heat-spend-medium"), sGood = getVal("c04-heat-spend-good"), sHigh = getVal("c04-heat-spend-high");
+            let sPreset = "custom";
+            if (sLow === "#e0f2fe" && sMed === "#7dd3fc" && sGood === "#3b82f6" && sHigh === "#1e3a8a") sPreset = "blue";
+            else if (sLow === "#dcfce7" && sMed === "#86efac" && sGood === "#22c55e" && sHigh === "#15803d") sPreset = "green";
+            else if (sLow === "#ffedd5" && vMed === "#fed7aa" && sGood === "#f97316" && sHigh === "#ea580c") sPreset = "orange";
+            const sSelect = document.getElementById("c04-preset-spend-palette");
+            if (sSelect) sSelect.value = sPreset;
+
+            const scLow = getVal("c04-heat-score-low"), scMed = getVal("c04-heat-score-medium"), scGood = getVal("c04-heat-score-good"), scHigh = getVal("c04-heat-score-high");
+            let scPreset = "custom";
+            if (scLow === "#dc2626" && scMed === "#fb923c" && scGood === "#4ade80" && scHigh === "#16a34a") scPreset = "traffic";
+            else if (scLow === "#7f1d1d" && scMed === "#c2410c" && scGood === "#f97316" && scHigh === "#fb923c") scPreset = "sunset";
+            else if (scLow === "#4c1d95" && scMed === "#2563eb" && scGood === "#06b6d4" && scHigh === "#0d9488") scPreset = "ocean";
+            const scSelect = document.getElementById("c04-preset-score-palette");
+            if (scSelect) scSelect.value = scPreset;
+            
+            const dLow = getVal("c04-heat-density-low"), dMed = getVal("c04-heat-density-medium"), dGood = getVal("c04-heat-density-good"), dHigh = getVal("c04-heat-density-high");
+            let dPreset = "custom";
+            if (dLow === "#f3e8ff" && dMed === "#c084fc" && dGood === "#a855f7" && dHigh === "#7e22ce") dPreset = "purple";
+            else if (dLow === "#ffedd5" && dMed === "#fed7aa" && dGood === "#f97316" && dHigh === "#ea580c") dPreset = "orange";
+            else if (dLow === "#e0f2fe" && dMed === "#7dd3fc" && dGood === "#3b82f6" && dHigh === "#1e3a8a") dPreset = "blue";
+            const dSelect = document.getElementById("c04-preset-density-palette");
+            if (dSelect) dSelect.value = dPreset;
+        };
+
+        const setupPresetDropdown = (selectId, paletteKey, colorIds) => {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+            select.onchange = () => {
+                const val = select.value;
+                if (val === "custom") return;
+                const colors = PALETTES[paletteKey][val];
+                if (colors) {
+                    colorIds.forEach((id, idx) => {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            el.value = colors[idx];
+                            el.dispatchEvent(new Event("change"));
+                        }
+                    });
+                }
+            };
+        };
+
+        setupPresetDropdown("c04-preset-marker-score", "score", ["c04-color-low", "c04-color-medium", "c04-color-good", "c04-color-high"]);
+        setupPresetDropdown("c04-preset-visits-palette", "visits", ["c04-heat-visits-low", "c04-heat-visits-medium", "c04-heat-visits-good", "c04-heat-visits-high"]);
+        setupPresetDropdown("c04-preset-spend-palette", "spend", ["c04-heat-spend-low", "c04-heat-spend-medium", "c04-heat-spend-good", "c04-heat-spend-high"]);
+        setupPresetDropdown("c04-preset-score-palette", "score", ["c04-heat-score-low", "c04-heat-score-medium", "c04-heat-score-good", "c04-heat-score-high"]);
+        setupPresetDropdown("c04-preset-density-palette", "density", ["c04-heat-density-low", "c04-heat-density-medium", "c04-heat-density-good", "c04-heat-density-high"]);
+
+        const colorInputs = [
+            "c04-color-low", "c04-color-medium", "c04-color-good", "c04-color-high",
+            "c04-heat-visits-low", "c04-heat-visits-medium", "c04-heat-visits-good", "c04-heat-visits-high",
+            "c04-heat-spend-low", "c04-heat-spend-medium", "c04-heat-spend-good", "c04-heat-spend-high",
+            "c04-heat-score-low", "c04-heat-score-medium", "c04-heat-score-good", "c04-heat-score-high",
+            "c04-heat-density-low", "c04-heat-density-medium", "c04-heat-density-good", "c04-heat-density-high"
+        ];
+        colorInputs.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("change", updateSelectFromColors);
+        });
+
+        setTimeout(updateSelectFromColors, 100);
+
         document.getElementById("c04-save-settings").onclick = () => {
             const cfg = configFromForm();
             Object.assign(root.C04GeoConfig, cfg);
@@ -642,21 +860,108 @@
             root.C04GeoSheets.saveSettings(cfg).catch(err => console.warn("[C04 GEO] Erro ao salvar configuracoes remotamente:", err));
             document.getElementById("c04-settings-modal").classList.remove("open"); render();
         };
-        document.getElementById("c04-restore-tab").onclick = () => restoreDefaults(false);
-        document.getElementById("c04-restore-all").onclick = () => restoreDefaults(true);
+        document.getElementById("c04-restore-tab").onclick = () => restoreDefaults(false, false);
+        document.getElementById("c04-restore-all").onclick = () => restoreDefaults(true, true);
     }
-    async function restoreDefaults(close) {
+    function resetSidebarInputsToDefault() {
+        localStorage.removeItem("c04_geo_sidebar_preferences");
+        
+        const defaults = {
+            pins: true,
+            cluster: false,
+            visits: false,
+            spend: false,
+            score: true,
+            density: false
+        };
+        Object.entries(defaults).forEach(([key, val]) => {
+            const el = document.getElementById(`c04-layer-${key}`);
+            if (el) el.checked = val;
+        });
+        
+        const esc = document.getElementById("c04-exclude-single");
+        if (esc) esc.checked = true;
+        
+        const filterIds = [
+            "c04-frequency-min", "c04-frequency-max",
+            "c04-ticket-filter-min", "c04-ticket-filter-max",
+            "c04-score-filter-min", "c04-score-filter-max"
+        ];
+        filterIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = "";
+        });
+    }
+    function saveSidebarPreferences() {
+        const prefs = {
+            excludeSingleVisit: document.getElementById("c04-exclude-single")?.checked,
+            layers: {
+                pins: document.getElementById("c04-layer-pins")?.checked,
+                cluster: document.getElementById("c04-layer-cluster")?.checked,
+                visits: document.getElementById("c04-layer-visits")?.checked,
+                spend: document.getElementById("c04-layer-spend")?.checked,
+                score: document.getElementById("c04-layer-score")?.checked,
+                density: document.getElementById("c04-layer-density")?.checked
+            },
+            filters: {
+                frequencyMin: document.getElementById("c04-frequency-min")?.value,
+                frequencyMax: document.getElementById("c04-frequency-max")?.value,
+                ticketMin: document.getElementById("c04-ticket-filter-min")?.value,
+                ticketMax: document.getElementById("c04-ticket-filter-max")?.value,
+                scoreMin: document.getElementById("c04-score-filter-min")?.value,
+                scoreMax: document.getElementById("c04-score-filter-max")?.value
+            }
+        };
+        localStorage.setItem("c04_geo_sidebar_preferences", JSON.stringify(prefs));
+    }
+    function loadSidebarPreferences() {
+        const prefsStr = localStorage.getItem("c04_geo_sidebar_preferences");
+        if (!prefsStr) return;
+        try {
+            const prefs = JSON.parse(prefsStr);
+            if (prefs.hasOwnProperty("excludeSingleVisit")) {
+                const el = document.getElementById("c04-exclude-single");
+                if (el) el.checked = prefs.excludeSingleVisit;
+            }
+            if (prefs.layers) {
+                Object.entries(prefs.layers).forEach(([key, val]) => {
+                    const el = document.getElementById(`c04-layer-${key}`);
+                    if (el) el.checked = val;
+                });
+            }
+            if (prefs.filters) {
+                const mapIds = {
+                    frequencyMin: "c04-frequency-min",
+                    frequencyMax: "c04-frequency-max",
+                    ticketMin: "c04-ticket-filter-min",
+                    ticketMax: "c04-ticket-filter-max",
+                    scoreMin: "c04-score-filter-min",
+                    scoreMax: "c04-score-filter-max"
+                };
+                Object.entries(prefs.filters).forEach(([key, val]) => {
+                    const el = document.getElementById(mapIds[key]);
+                    if (el) el.value = val || "";
+                });
+            }
+        } catch (e) {
+            console.warn("[C04 GEO] Erro ao carregar preferencias da barra lateral:", e);
+        }
+    }
+    async function restoreDefaults(close, resetSidebar) {
         const defaults = JSON.parse(JSON.stringify(root.C04GeoDefaultSettings));
         Object.assign(root.C04GeoConfig, defaults);
         localStorage.removeItem("c04_geo_custom_settings");
         root.C04GeoSheets.saveSettings(defaults).catch(err => console.warn("[C04 GEO] Erro ao salvar configuracoes remotamente:", err));
         updateFormFromConfig(defaults);
+        if (resetSidebar) {
+            resetSidebarInputsToDefault();
+        }
         if (close) document.getElementById("c04-settings-modal").classList.remove("open");
         render();
     }
     function modal(id, title, content) { return `<div class="c04-modal" id="${id}"><div class="c04-modal-card"><button class="c04-btn alt c04-modal-close" style="float:right">Fechar</button><h3>${title}</h3>${content}</div></div>`; }
     function setting(label, help, id, type, value, extra) {
-        return `<label>${label} <span class="c04-info" title="${help}" aria-label="${help}">i</span><input id="${id}" type="${type}" value="${value}" ${extra || ""}></label>`;
+        return `<label class="c04-settings-label ${type === 'color' ? 'c04-color-setting' : ''}"><span class="c04-label-title">${label} <span class="c04-info" title="${help}" aria-label="${help}">i</span></span><input id="${id}" type="${type}" value="${value}" ${extra || ""}></label>`;
     }
     async function open() {
         destroy();
@@ -693,15 +998,15 @@
             <label class="c04-geo-field">Fim <input id="c04-end" type="date" value="${period.end}"></label>
             <button class="c04-btn c04-sync" id="c04-sync">Sincronizar</button>
             <button class="c04-btn alt" id="c04-settings">Configuracoes</button>
-            <button class="c04-btn alt c04-icon-btn" id="c04-fullscreen" title="Tela cheia">[]</button>
+            <button class="c04-btn alt c04-icon-btn" id="c04-fullscreen" title="Tela cheia" style="display: none;">[]</button>
             <button class="c04-btn alt c04-icon-btn" id="c04-toggle-head" title="Recolher menu superior">▲</button>
-            <button id="c04-geo-close" aria-label="Fechar modulo">x</button>
             <div id="c04-header-progress-container">
                 <span id="c04-header-progress-text">Pronto</span>
                 <span id="c04-header-progress-counters"></span>
             </div>
             <div id="c04-header-progress-bar"></div>
         </header>
+        <button id="c04-geo-close" aria-label="Fechar modulo">x</button>
         <button class="c04-btn alt c04-icon-btn" id="c04-open-head" title="Abrir menu superior">▼</button>
         <main id="c04-geo-main">
             <aside id="c04-geo-sidebar">
@@ -714,7 +1019,7 @@
                         <div id="c04-general-summary"></div>
                         
                         <div class="c04-summary-actions" style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 8px;">
-                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#cbd5e1;margin-bottom:0;"><input data-filter id="c04-exclude-single" type="checkbox"> Ocultar primeira visita</label>
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#cbd5e1;margin-bottom:0;"><input data-filter id="c04-exclude-single" type="checkbox" checked> Ocultar única visita no período</label>
                             
                             <div class="c04-selection-tools" style="border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 8px; margin-top: 2px;">
                                 <span style="font-size: 11px; color: #94a3b8; display: block; margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Seleção Regional:</span>
@@ -735,10 +1040,11 @@
                     <h4>Camadas analiticas</h4>
                     <div class="c04-check-grid">
                         <label><input id="c04-layer-pins" type="checkbox" checked> Pins</label>
-                        <label><input id="c04-layer-cluster" type="checkbox" checked> Cluster de pins</label>
-                        <label><input id="c04-layer-visits" type="checkbox" checked> Visitas</label>
-                        <label><input id="c04-layer-spend" type="checkbox" checked> Receita consumida<!-- Valor de servicos --></label>
+                        <label><input id="c04-layer-cluster" type="checkbox"> Cluster de pins</label>
+                        <label><input id="c04-layer-visits" type="checkbox"> Visitas</label>
+                        <label><input id="c04-layer-spend" type="checkbox"> Receita consumida<!-- Valor de servicos --></label>
                         <label><input id="c04-layer-score" type="checkbox" checked> Score</label>
+                        <label><input id="c04-layer-density" type="checkbox"> Densidade</label>
                     </div>
                     <!-- Hidden compatibility layers -->
                     <div style="display: none;">
@@ -755,9 +1061,9 @@
                 <!-- Grupo 3: Filtros -->
                 <div class="c04-side-group c04-filter" style="border-bottom: 0;">
                     <h4>Filtros</h4>
-                    <label>Frequencia em dias <span class="c04-info" title="Menor intervalo indica maior recorrencia. Valores ausentes nao entram na faixa.">i</span><span class="c04-filter-row"><input data-filter id="c04-frequency-min" type="number" placeholder="Min."><input data-filter id="c04-frequency-max" type="number" placeholder="Max."></span></label>
-                    <label>Receita consumida <span class="c04-info" title="Valor medio dos servicos executados, nao necessariamente pago no caixa">i</span><!-- Valor de servicos --><span class="c04-filter-row"><input data-filter id="c04-ticket-filter-min" type="number" placeholder="Min."><input data-filter id="c04-ticket-filter-max" type="number" placeholder="Max."></span></label>
-                    <label>Score <span class="c04-info" title="Combinacao de recorrencia e ticket de servicos">i</span><span class="c04-filter-row"><input data-filter id="c04-score-filter-min" type="number" min="0" max="100" placeholder="Min."><input data-filter id="c04-score-filter-max" type="number" min="0" max="100" placeholder="Max."></span></label>
+                    <label><span class="c04-label-title">Frequencia em dias <span class="c04-info" title="Menor intervalo indica maior recorrencia. Valores ausentes nao entram na faixa.">i</span></span><span class="c04-filter-row"><input data-filter id="c04-frequency-min" type="number" placeholder="Min."><input data-filter id="c04-frequency-max" type="number" placeholder="Max."></span></label>
+                    <label><span class="c04-label-title">Receita consumida <span class="c04-info" title="Valor medio dos servicos executados, nao necessariamente pago no caixa">i</span></span><span class="c04-filter-row"><input data-filter id="c04-ticket-filter-min" type="number" placeholder="Min."><input data-filter id="c04-ticket-filter-max" type="number" placeholder="Max."></span></label>
+                    <label><span class="c04-label-title">Score <span class="c04-info" title="Combinacao de recorrencia e ticket de servicos">i</span></span><span class="c04-filter-row"><input data-filter id="c04-score-filter-min" type="number" min="0" max="100" placeholder="Min."><input data-filter id="c04-score-filter-max" type="number" min="0" max="100" placeholder="Max."></span></label>
                 </div>
             </aside>
             <section style="position:relative;min-width:0">
@@ -780,24 +1086,49 @@
                     ${setting("Peso ticket de servicos","Participacao do ticket de servicos realizados no score final.","c04-w-ticket","number",c.weights.ticket)}
                     ${setting("Excelente ate dias","Referencia superior para classificacao excelente.","c04-r-ex","number",c.recurrenceLimits.excellent)}
                     ${setting("Bom ate dias","Referencia superior para classificacao boa.","c04-r-good","number",c.recurrenceLimits.good)}
-                    ${setting("Melhorar ate dias","Referencia superior antes da classificacao ruim.","c04-r-improve","number",c.recurrenceLimits.improve)}
+                    ${setting("Baixo ate dias","Referencia superior para classificacao baixa.","c04-r-low","number",c.recurrenceLimits.low)}
+                    ${setting("Ruim ate dias","Referencia superior para classificacao ruim.","c04-r-bad","number",c.recurrenceLimits.bad)}
                 </div>
             </div>
             <div class="c04-section">
-                <h4>Mapa e cores</h4>
-                <div class="c04-grid">
-                    ${setting("Raio cluster","Distancia em pixels usada para agrupar pins.","c04-cluster","number",c.clusterRadius)}
-                    ${setting("Pin cliente","Cor principal dos pins de clientes.","c04-color-client","color",c.colors.clientPin)}
-                    ${setting("Pin Clube04","Cor do marcador especial da unidade.","c04-color-store","color",c.colors.storePin)}
-                    ${setting("Clusters","Cor principal dos agrupamentos.","c04-color-cluster","color",c.colors.cluster)}
-                    ${setting("Score baixo","Cor da faixa baixa de score.","c04-color-low","color",c.colors.scoreLow)}
-                    ${setting("Score medio","Cor da faixa media de score.","c04-color-medium","color",c.colors.scoreMedium)}
-                    ${setting("Score bom","Cor da faixa boa de score.","c04-color-good","color",c.colors.scoreGood)}
-                    ${setting("Score alto","Cor da faixa alta de score.","c04-color-high","color",c.colors.scoreHigh)}
+                <h4>Cores e Marcações (Pins, Clusters e Anel de Score)</h4>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px;">
+                    <!-- Subgrupo 1: Marcadores (Pins) -->
+                    <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; gap: 10px;">
+                        <h5 style="margin: 0 0 6px; font-size: 13px; color: #fb923c; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">Pins (Marcadores)</h5>
+                        ${setting("Pin cliente","Cor principal dos pins de clientes.","c04-color-client","color",c.colors.clientPin)}
+                        ${setting("Pin Clube04","Cor do marcador especial da unidade.","c04-color-store","color",c.colors.storePin)}
+                    </div>
+                    
+                    <!-- Subgrupo 2: Agrupamento (Clusters) -->
+                    <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; gap: 10px;">
+                        <h5 style="margin: 0 0 6px; font-size: 13px; color: #fb923c; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">Clusters (Agrupamentos)</h5>
+                        ${setting("Raio cluster","Distancia em pixels usada para agrupar pins.","c04-cluster","number",c.clusterRadius)}
+                        ${setting("Cor do Cluster","Cor principal dos agrupamentos.","c04-color-cluster","color",c.colors.cluster)}
+                    </div>
+                    
+                    <!-- Subgrupo 3: Anel de Score -->
+                    <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; gap: 10px;">
+                        <h5 style="margin: 0 0 6px; font-size: 13px; color: #fb923c; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">Anel de Score</h5>
+                        <label class="c04-settings-label" style="margin-bottom: 4px;">
+                            <span class="c04-label-title">Paleta Pré-definida</span>
+                            <select id="c04-preset-marker-score" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;outline:none;width:100%;">
+                                <option value="traffic">Semáforo (Vermelho → Verde)</option>
+                                <option value="sunset">Pôr do Sol (Vermelho → Laranja)</option>
+                                <option value="ocean">Oceano (Azul → Ciano)</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                        </label>
+                        ${setting("Excelente","Cor da faixa excelente de score.","c04-color-high","color",c.colors.scoreHigh)}
+                        ${setting("Bom","Cor da faixa boa de score.","c04-color-good","color",c.colors.scoreGood)}
+                        ${setting("Baixo","Cor da faixa baixa de score.","c04-color-medium","color",c.colors.scoreMedium)}
+                        ${setting("Ruim","Cor da faixa ruim de score.","c04-color-low","color",c.colors.scoreLow)}
+                    </div>
                 </div>
             </div>
             <div class="c04-section">
-                <h4>Configurações de Calor (Heatmaps)</h4>
+                <h4>Mapa de calor (Heatmaps)</h4>
                 <div class="c04-heatmap-general">
                     ${setting("Opacidade","Transparência das camadas de calor.","c04-opacity","number",c.heatmaps.opacity,'step=".05"')}
                     ${setting("Raio","Área de influência de cada cliente no heatmap.","c04-radius","number",c.heatmaps.radius)}
@@ -806,18 +1137,67 @@
                 <div class="c04-heatmap-group-grid">
                     <div class="c04-heatmap-type-group">
                         <h5>Visitas</h5>
-                        ${setting("Baixa","Início da escala de visitas.","c04-heat-visits-low","color",c.colors.heatVisitsLow)}
-                        ${setting("Alta","Fim da escala de visitas.","c04-heat-visits-high","color",c.colors.heatVisitsHigh)}
+                        <label class="c04-settings-label" style="margin-bottom: 4px;">
+                            <span class="c04-label-title">Paleta Pré-definida</span>
+                            <select id="c04-preset-visits-palette" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;outline:none;width:100%;">
+                                <option value="orange">Paleta Laranja (Padrão)</option>
+                                <option value="purple">Paleta Roxa</option>
+                                <option value="blue">Paleta Azul</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                        </label>
+                        ${setting("Excelente","Visitas muito frequentes.","c04-heat-visits-high","color",c.colors.heatVisitsHigh)}
+                        ${setting("Bom","Visitas normais.","c04-heat-visits-good","color",c.colors.heatVisitsGood)}
+                        ${setting("Baixo","Poucas visitas.","c04-heat-visits-medium","color",c.colors.heatVisitsMedium)}
+                        ${setting("Ruim","Sem visitas recentes.","c04-heat-visits-low","color",c.colors.heatVisitsLow)}
                     </div>
                     <div class="c04-heatmap-type-group">
                         <h5>Receita</h5>
-                        ${setting("Baixa","Início da escala de receita.","c04-heat-spend-low","color",c.colors.heatSpendLow)}
-                        ${setting("Alta","Fim da escala de receita.","c04-heat-spend-high","color",c.colors.heatSpendHigh)}
+                        <label class="c04-settings-label" style="margin-bottom: 4px;">
+                            <span class="c04-label-title">Paleta Pré-definida</span>
+                            <select id="c04-preset-spend-palette" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;outline:none;width:100%;">
+                                <option value="blue">Paleta Azul (Padrão)</option>
+                                <option value="green">Paleta Verde</option>
+                                <option value="orange">Paleta Laranja</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                        </label>
+                        ${setting("Excelente","Alto consumo.","c04-heat-spend-high","color",c.colors.heatSpendHigh)}
+                        ${setting("Bom","Consumo regular.","c04-heat-spend-good","color",c.colors.heatSpendGood)}
+                        ${setting("Baixo","Baixo consumo.","c04-heat-spend-medium","color",c.colors.heatSpendMedium)}
+                        ${setting("Ruim","Sem consumo.","c04-heat-spend-low","color",c.colors.heatSpendLow)}
                     </div>
                     <div class="c04-heatmap-type-group">
                         <h5>Score</h5>
-                        ${setting("Baixa","Início da escala de score.","c04-heat-score-low","color",c.colors.heatScoreLow)}
-                        ${setting("Alta","Fim da escala de score.","c04-heat-score-high","color",c.colors.heatScoreHigh)}
+                        <label class="c04-settings-label" style="margin-bottom: 4px;">
+                            <span class="c04-label-title">Paleta Pré-definida</span>
+                            <select id="c04-preset-score-palette" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;outline:none;width:100%;">
+                                <option value="traffic">Semáforo (Vermelho → Verde)</option>
+                                <option value="sunset">Pôr do Sol (Vermelho → Laranja)</option>
+                                <option value="ocean">Oceano (Azul → Ciano)</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                        </label>
+                        ${setting("Excelente","Score excelente.","c04-heat-score-high","color",c.colors.heatScoreHigh)}
+                        ${setting("Bom","Score bom.","c04-heat-score-good","color",c.colors.heatScoreGood)}
+                        ${setting("Baixo","Score baixo.","c04-heat-score-medium","color",c.colors.heatScoreMedium)}
+                        ${setting("Ruim","Score ruim.","c04-heat-score-low","color",c.colors.heatScoreLow)}
+                    </div>
+                    <div class="c04-heatmap-type-group">
+                        <h5>Densidade</h5>
+                        <label class="c04-settings-label" style="margin-bottom: 4px;">
+                            <span class="c04-label-title">Paleta Pré-definida</span>
+                            <select id="c04-preset-density-palette" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:4px 8px;font-size:11px;outline:none;width:100%;">
+                                <option value="purple">Paleta Roxa (Padrão)</option>
+                                <option value="orange">Paleta Laranja</option>
+                                <option value="blue">Paleta Azul</option>
+                                <option value="custom">Personalizado</option>
+                            </select>
+                        </label>
+                        ${setting("Excelente","Densidade altíssima.","c04-heat-density-high","color",c.colors.heatDensityHigh)}
+                        ${setting("Bom","Densidade alta.","c04-heat-density-good","color",c.colors.heatDensityGood)}
+                        ${setting("Baixo","Densidade média.","c04-heat-density-medium","color",c.colors.heatDensityMedium)}
+                        ${setting("Ruim","Densidade baixa.","c04-heat-density-low","color",c.colors.heatDensityLow)}
                     </div>
                 </div>
             </div>
@@ -835,7 +1215,7 @@
         ${modal("c04-pending-modal","Central de pendencias",`<p>As correcoes afetam somente o modulo GEO.</p><div class="c04-grid"><label>Status<select id="c04-pending-status"><option value="">Todos</option><option>open</option><option>resolved</option><option>ignored</option></select></label><label>Fonte<input id="c04-pending-source"></label><label>Motivo<input id="c04-pending-reason"></label></div><table class="c04-table"><thead><tr><th>Data</th><th>Status</th><th>Fonte</th><th>Motivo</th><th>Cliente</th><th>Detalhe</th><th>Acao</th></tr></thead><tbody id="c04-pending-body"></tbody></table>`)}
         ${modal("c04-full-modal","Confirmar varredura completa",`<p class="c04-error"><b>Esta operacao pode consumir cota da Geocoding API.</b></p><p id="c04-full-estimate"></p><label>Digite VARREDURA para confirmar <input id="c04-full-confirm"></label><div class="c04-actions"><button class="c04-btn danger c04-sync" id="c04-run-full" disabled>Executar varredura completa</button></div>`)}
         ${modal("c04-reset-modal","Confirmar limpeza do banco GEO",`<p class="c04-error"><b>Esta operacao remove somente os dados controlados pelo modulo GEO.</b></p><label>Digite LIMPAR BANCO GEO para confirmar <input id="c04-reset-confirm"></label><div class="c04-actions"><button class="c04-btn danger" id="c04-run-reset" disabled>Limpar banco GEO</button></div>`)}
-        `; document.body.appendChild(panel); bind();
+        `; document.body.appendChild(panel); loadSidebarPreferences(); bind();
         try { await root.C04GeoMap.init(document.getElementById("c04-geo-map")); progress({ stage: root.C04GeoSheets.configured() ? "Pronto" : "Configure Apps Script no Tampermonkey", percent: 0 }); }
         catch (error) { progress({ stage: `Erro no mapa: ${error.message}`, percent: 0 }); }
     }
