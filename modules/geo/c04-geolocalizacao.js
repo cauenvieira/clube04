@@ -122,6 +122,51 @@
         .c04-modal { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 2000; display: none; place-items: center; }
         .c04-modal.open { display: grid; }
         .c04-modal-card { background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 24px; width: min(760px, 90%); max-height: 85%; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); color: #f8fafc; }
+        #c04-pending-modal .c04-modal-card { width: min(1100px, 95%); }
+        .c04-pending-row:not(.c04-expanded) .c04-pending-collapsible {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 280px;
+        }
+        .c04-pending-row.c04-expanded .c04-pending-collapsible {
+            white-space: normal;
+            word-break: break-word;
+        }
+        .c04-pending-filters {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.15);
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            flex-wrap: wrap;
+        }
+        .c04-pending-filters label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+        .c04-pending-filters select, .c04-pending-filters input {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #fff;
+            padding: 6px 12px;
+            font-size: 13px;
+            outline: none;
+            min-width: 140px;
+            height: 34px;
+            box-sizing: border-box;
+        }
+        .c04-pending-filters select:focus, .c04-pending-filters input:focus {
+            border-color: #f97316;
+        }
         .c04-modal-card h3 { margin-top: 0; font-size: 18px; font-weight: 600; }
         .c04-tabs { display: flex; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 20px; overflow-x: auto; padding-bottom: 2px; }
         .c04-tab { background: rgba(255, 255, 255, 0.05); color: #94a3b8; border: 0; border-radius: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
@@ -226,23 +271,34 @@
         const node = document.getElementById("c04-general-summary");
         if (!node) return;
         const mapped = visibleCustomers.filter(item => Number.isFinite(item.lat));
-        const end = document.getElementById("c04-end")?.value;
-        const gen = root.C04GeoCore.selectionSummary(mapped, end);
+        const startVal = document.getElementById("c04-start")?.value;
+        const endVal = document.getElementById("c04-end")?.value;
+        let isPeriodShort = false;
+        if (startVal && endVal) {
+            const startD = new Date(startVal);
+            const endD = new Date(endVal);
+            const diffDays = Math.round((endD - startD) / (1000 * 60 * 60 * 24));
+            if (diffDays < 45) {
+                isPeriodShort = true;
+            }
+        }
+        const gen = root.C04GeoCore.selectionSummary(mapped, endVal);
         const hasSel = selected && selected.length > 0;
-        const sel = hasSel ? root.C04GeoCore.selectionSummary(selected, end) : null;
-        const fmt = (val, isCurrency, isDays) => {
-            if (val == null) return "-";
+        const sel = hasSel ? root.C04GeoCore.selectionSummary(selected, endVal) : null;
+        const fmt = (val, isCurrency, isDays, isNA = false) => {
+            if (isNA) return "N/A";
+            if (val == null || Number.isNaN(val) || val === 0) return "-";
             if (isCurrency) return `R$ ${val.toFixed(0)}`;
             if (isDays) return `${val.toFixed(1)} d`;
             return val.toFixed(0);
         };
-        const renderMetric = (label, help, genVal, selVal, isCurrency, isDays) => {
-            const selStr = hasSel ? `<span class="c04-val-sel">${fmt(selVal, isCurrency, isDays)}</span>` : "";
+        const renderMetric = (label, help, genVal, selVal, isCurrency, isDays, isNA = false) => {
+            const selStr = hasSel ? `<span class="c04-val-sel">${fmt(selVal, isCurrency, isDays, isNA)}</span>` : "";
             return `
                 <div class="c04-summary-item">
                     <span class="c04-summary-label">${label} <span class="c04-info" title="${help}">i</span></span>
                     <span class="c04-summary-val-wrapper">
-                        <span class="c04-val-general">${fmt(genVal, isCurrency, isDays)}</span>${selStr}
+                        <span class="c04-val-general">${fmt(genVal, isCurrency, isDays, isNA)}</span>${selStr}
                      </span>
                 </div>
             `;
@@ -252,7 +308,7 @@
         html += renderMetric("Visitas", "Quantidade total de visitas no período", gen.visits, sel ? sel.visits : null);
         html += renderMetric("Receita consumida", "Total de receita consumida no período", gen.spend, sel ? sel.spend : null, true);
         html += renderMetric("Ticket de consumo", "Média gasta por visita", gen.averageTicket, sel ? sel.averageTicket : null, true);
-        html += renderMetric("Freq. mediana", "Intervalo mediano de dias entre visitas", gen.frequencyMedian, sel ? sel.frequencyMedian : null, false, true);
+        html += renderMetric("Freq. mediana", "Intervalo mediano de dias entre visitas", gen.frequencyMedian, sel ? sel.frequencyMedian : null, false, true, isPeriodShort);
         html += renderMetric("Score médio", "Score médio geral dos clientes", gen.averageScore, sel ? sel.averageScore : null);
         html += `</div>`;
         if (hasSel) {
@@ -351,10 +407,10 @@
                            `• Encontrado: "${foundAddr}"`;
                 }
                 
-                const id = item.customer.idPessoa || item.customer.name || "unknown";
-                pending.push({ pendingId: root.C04GeoCore.hash(`Pendencia|${id}`),
+                pending.push({ pendingId: root.C04GeoCore.hash(`Pendencia|${item.customer.idPessoa || item.customer.name}`),
                     source: "Geocodificacao", reason: item.reason, message: msg,
-                    idPessoa: item.customer.idPessoa, customerName: item.customer.name, status: "open", record: item });
+                    idPessoa: item.customer.idPessoa, customerName: item.customer.name, status: "open", record: item,
+                    createdAt: new Date().toISOString() });
             });
             
             // Deduplicar pendências mantendo no máximo uma por cliente (com prioridade para Clientes)
@@ -553,20 +609,28 @@
                 const statusColor = (item.status === "resolved") ? "#10b981" : (item.status === "ignored") ? "#64748b" : "#f59e0b";
                 const statusText = (item.status === "resolved") ? "Resolvida" : (item.status === "ignored") ? "Ignorada" : "Aberta";
                 
-                return `<tr>
+                return `<tr class="c04-pending-row">
                     <td style="white-space: nowrap; color: #94a3b8; font-size: 11px;">${esc(dateStr)}</td>
-                    <td style="color: #cbd5e1; font-weight: 500;">${esc(item.source || "")} <span style="font-size: 9px; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${statusColor}; border: 1px solid ${statusColor}44; margin-left: 4px;">${statusText}</span></td>
+                    <td><span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${statusColor}; border: 1px solid ${statusColor}44; display: inline-block;">${statusText}</span></td>
+                    <td style="color: #cbd5e1; font-weight: 500;">${esc(item.source || "")}</td>
                     <td style="color: #fb923c; font-weight: 600; font-size: 12px;">${esc(info.motivo)}</td>
                     <td style="color: #f8fafc; font-weight: 600;">${esc(item.customerName || "")}</td>
-                    <td style="color: #cbd5e1; font-size: 12px; max-width: 250px;">${esc(info.solucao)}</td>
+                    <td style="color: #cbd5e1; font-size: 12px; max-width: 280px;"><div class="c04-pending-collapsible">${esc(info.solucao)}</div></td>
                     <td><button class="c04-btn alt c04-open-tech" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px;">Ver Técnico</button></td>
-                    <td style="text-align: right;"><div class="c04-pending-actions" style="justify-content: flex-end;">
-                        <button class="c04-btn alt c04-open-person" data-person="${esc(item.idPessoa || "")}">Cadastro</button>
-                        <button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}">Tratar</button>
-                        ${item.status !== "open" ? `<button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}">Reabrir</button>` : ""}
+                    <td style="text-align: right;"><div class="c04-pending-actions" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end; justify-content: center;">
+                        <button class="c04-btn alt c04-open-person" data-person="${esc(item.idPessoa || "")}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Cadastro</button>
+                        <button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Tratar</button>
+                        ${item.status !== "open" ? `<button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Reabrir</button>` : ""}
                     </div></td>
                 </tr>`;
             }).join("");
+        body.querySelectorAll(".c04-pending-row").forEach(row => {
+            row.style.cursor = "pointer";
+            row.onclick = (e) => {
+                if (e.target.closest("button") || e.target.closest("a")) return;
+                row.classList.toggle("c04-expanded");
+            };
+        });
         body.querySelectorAll(".c04-open-person").forEach(button => { button.onclick = () => {
             if (!button.dataset.person) return alert("Pendencia sem idPessoa.");
             openPersonRegistration(button.dataset.person);
@@ -609,6 +673,7 @@
         });
         document.body.appendChild(form); form.submit(); form.remove();
     }
+    root.c04OpenPersonRegistration = openPersonRegistration;
     async function diagnostic(action) {
         const node = document.getElementById("c04-diagnostic-result"); node.innerHTML = "<p>Executando...</p>";
         try { showDiagnostic(action, await root.C04GeoSheets[action]()); }
@@ -1337,23 +1402,24 @@
         ${modal("c04-log-modal","Historico e logs",`<h4>Execucoes</h4><table class="c04-table"><thead><tr><th>Inicio</th><th>Tipo</th><th>Status</th><th>Periodo</th></tr></thead><tbody id="c04-log-body"></tbody></table><h4>Pendencias detalhadas</h4><table class="c04-table"><thead><tr><th>Data</th><th>Fonte</th><th>Motivo</th><th>Mensagem</th></tr></thead><tbody id="c04-log-detail-body"></tbody></table>`)}
         ${modal("c04-pending-modal","Central de pendencias",`
             <p style="margin-top: 0; margin-bottom: 16px; color: #94a3b8; font-size: 13px;">As correções afetam somente as visualizações e filtros do módulo GEO.</p>
-            <div class="c04-grid" style="margin-bottom: 16px;">
+            <div class="c04-pending-filters">
                 <label>Status
-                    <select id="c04-pending-status" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;">
+                    <select id="c04-pending-status">
                         <option value="">Todos</option>
                         <option value="open">Abertas</option>
                         <option value="resolved">Resolvidas</option>
                         <option value="ignored">Ignoradas</option>
                     </select>
                 </label>
-                <label>Fonte<input id="c04-pending-source" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;"></label>
-                <label>Motivo<input id="c04-pending-reason" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;"></label>
+                <label>Fonte<input id="c04-pending-source" placeholder="Filtrar por fonte..."></label>
+                <label>Motivo<input id="c04-pending-reason" placeholder="Filtrar por motivo..."></label>
             </div>
             <div style="overflow-x: auto;">
                 <table class="c04-table">
                     <thead>
                         <tr>
                             <th style="white-space: nowrap;">Data</th>
+                            <th>Status</th>
                             <th>Fonte</th>
                             <th>Motivo</th>
                             <th>Cliente</th>
