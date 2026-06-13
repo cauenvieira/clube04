@@ -4,12 +4,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const core = require("../c04-geo-core.js");
+const core = require("../modules/geo/c04-geo-core.js");
 
 function dataApi() {
     const context = { window: { C04GeoCore: core }, console, setTimeout, clearTimeout, setInterval, clearInterval, URL };
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), context);
     return context.window.C04GeoData;
 }
 
@@ -141,7 +141,7 @@ test("applies audited GEO address override", () => {
 });
 
 test("contains DataTables all-records attempt and paginated fallback", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8");
     assert.match(source, /page\.len\(-1\)\.draw/);
     assert.match(source, /page\.len\(100\)\.draw/);
     assert.match(source, /Coleta parcial/);

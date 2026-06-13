@@ -14,7 +14,7 @@ const SCHEMA = {
     "pertinent", "accepted", "rejected", "mapped", "pending", "error", "counters"],
   LogDetalhado: ["runId", "timestamp", "source", "idPessoa", "reason", "message"],
   Diagnostico: ["testId", "createdAt", "artificial"],
-  Pendencias: ["pendingId", "source", "reason", "idPessoa", "customerName", "message", "status", "resolvedAt", "resolvedBy"],
+  Pendencias: ["pendingId", "source", "reason", "idPessoa", "customerName", "message", "status", "createdAt", "resolvedAt", "resolvedBy"],
   ResolucaoPendencias: ["auditId", "pendingId", "action", "previousValue", "correctedValue", "visibleUser", "timestamp", "justification"],
   Staging: ["runId", "kind", "data", "stagedAt"]
 };

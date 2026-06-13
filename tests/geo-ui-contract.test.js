@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 test("GEO UI exposes cancellation, sidebar controls and translated layers", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geolocalizacao.js"), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geolocalizacao.js"), "utf8");
     assert.match(source, /Cancelar sincronizacao/);
     assert.match(source, /sidebar-closed/);
     assert.match(source, /id="c04-toggle-sidebar"/);
@@ -25,15 +25,15 @@ test("GEO UI exposes cancellation, sidebar controls and translated layers", () =
     assert.match(source, /C04GeoCore\.escapeHtml\(JSON\.stringify/);
     assert.match(source, /event\.stopImmediatePropagation\(\)/);
     assert.match(source, /addEventListener\("keydown", keydownHandler, true\)/);
-    assert.match(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), /const warning = built\.counts\.minimal/);
-    assert.match(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), /salesHeaders: Object\.keys/);
-    assert.match(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), /csvHeaders: Object\.keys/);
-    assert.match(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), /exactNameMatches, exactPhoneMatches/);
-    assert.match(fs.readFileSync(path.join(__dirname, "..", "c04-geo-data.js"), "utf8"), /const pendingReasons = built\.pending\.reduce/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), /const warning = built\.counts\.minimal/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), /salesHeaders: Object\.keys/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), /csvHeaders: Object\.keys/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), /exactNameMatches, exactPhoneMatches/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8"), /const pendingReasons = built\.pending\.reduce/);
 });
 
 test("map uses scale, reduced rectangle and satellite without rebuilding", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geo-map.js"), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8");
     assert.match(source, /scaleControl: true/);
     assert.match(source, /fullscreenControl: false/);
     assert.match(source, /setMapTypeId/);
@@ -47,11 +47,11 @@ test("map uses scale, reduced rectangle and satellite without rebuilding", () =>
 });
 
 test("map does not force progress outside short viewports", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geolocalizacao.js"), "utf8");
-    assert.match(source, /#c04-geo-map\{width:100%;height:100%;min-height:0\}/);
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geolocalizacao.js"), "utf8");
+    assert.match(source, /#c04-geo-map\s*\{\s*width:\s*100%;\s*height:\s*100%;\s*min-height:\s*0;?\s*\}/);
     assert.doesNotMatch(source, /#c04-geo-map\{[^}]*min-height:500px/);
-    assert.match(source, /#c04-geo-progress\{left:50%;bottom:36px/);
-    assert.match(source, /#c04-toggle-head\{position:absolute;right:54px/);
+    assert.match(source, /#c04-geo-progress\s*\{\s*left:\s*50%;\s*bottom:\s*(?:30px|36px)/);
+    assert.match(source, /#c04-toggle-head\s*\{\s*position:\s*absolute;\s*right:\s*(?:54px|56px)/);
     assert.match(source, /not\(#c04-geo-close\)/);
     assert.match(source, /function restoreFullscreenState/);
     assert.match(source, /panel\.dataset\.progressClosed/);

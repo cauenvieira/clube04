@@ -59,12 +59,26 @@
         const headers = rows[0].map(normalizeHeader);
         return rows.slice(1).map((values) => Object.fromEntries(headers.map((key, i) => [key, (values[i] || "").trim()])));
     }
+    function formatZip(value) {
+        if (!value) return "";
+        const raw = String(value).replace(/\D/g, "");
+        let padded = raw;
+        if (padded.length === 7) padded = "0" + padded;
+        if (padded.length === 8) {
+            return padded.slice(0, 5) + "-" + padded.slice(5);
+        }
+        return value;
+    }
     function field(record, aliasKey) {
         const keys = Object.keys(record || {}), aliases = ALIASES[aliasKey] || [aliasKey];
         for (const alias of aliases) {
             const wanted = normalizeHeader(alias);
             const key = keys.find((item) => normalizeHeader(item) === wanted);
-            if (key && String(record[key] || "").trim()) return record[key];
+            if (key && String(record[key] || "").trim()) {
+                const val = record[key];
+                if (aliasKey === "zip") return formatZip(val);
+                return val;
+            }
         }
         return "";
     }
@@ -202,5 +216,5 @@
     }
     return { normalize, normalizeHeader, parseMoney, parseDate, parseCsv, field, customerKey, extractPessoaId,
         visibleUser, canRunFullScan, addressOf, parseFrequencyDays, digits, normalizePhone, normalizePersonName, isActiveMogi, hasMinimumAddress,
-        averageIntervalDays, recurrence, percentileRanks, scoreCustomers, filterCustomers, hash, defaultPeriod, selectionSummary, escapeHtml, toCsv };
+        averageIntervalDays, recurrence, percentileRanks, scoreCustomers, filterCustomers, hash, defaultPeriod, selectionSummary, escapeHtml, toCsv, formatZip };
 });

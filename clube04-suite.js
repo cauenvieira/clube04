@@ -14,12 +14,9 @@
     const LAYOUT_CONFIG = { mainColor: '#000000', accentColor: '#ff6600', suiteName: 'SUITE • CB04 • MOGI •' };
 
     const tools = [
-        { id: 'metas',    icon: '🚀', color: '#2563eb', tooltip: 'Metas',    script: 'c04-metas.js' },
-        { id: 'ponto',    icon: '🕒', color: '#10b981', tooltip: 'Ponto',    script: 'c04-ponto.js' },
-        { id: 'geolocalizacao', icon: 'GEO', color: '#ea580c', tooltip: 'Geolocalizacao', script: 'c04-geolocalizacao.js' },
-        // { id: 'agenda',   icon: '📅', color: '#f59e0b', tooltip: 'Agenda',   script: 'c04-agenda.js' },
-        // { id: 'ocupacao', icon: '📊', color: '#8b5cf6', tooltip: 'Ocupação', script: 'c04-ocupacao.js' },
-        // { id: 'monitor',  icon: '👁️', color: '#dc2626', tooltip: 'Monitor 360º', script: 'c04-monitor.js' }
+        { id: 'metas',    icon: '🚀', color: '#2563eb', tooltip: 'Metas',    script: 'modules/metas/c04-metas.js' },
+        { id: 'ponto',    icon: '🕒', color: '#10b981', tooltip: 'Ponto',    script: 'modules/ponto/c04-ponto.js' },
+        { id: 'geolocalizacao', icon: 'GEO', color: '#ea580c', tooltip: 'Geolocalizacao', script: 'modules/geo/c04-geolocalizacao.js' }
     ];
 
     const CURRENT_SUITE_URL = document.currentScript && document.currentScript.src || "";

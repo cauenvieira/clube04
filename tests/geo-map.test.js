@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const core = require("../c04-geo-core.js");
+const core = require("../modules/geo/c04-geo-core.js");
 
 function mapApi() {
     class LatLng {
@@ -18,7 +18,7 @@ function mapApi() {
     context.google = { maps: { geometry: { spherical: { computeDistanceBetween: () => 2 } } } };
     context.window.google = context.google;
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "c04-geo-map.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8"), context);
     return { api: context.window.C04GeoMap, LatLng };
 }
 
@@ -40,7 +40,7 @@ test("accepts partial geocode only when postal code confirms it", () => {
 });
 
 test("map source persists and reuses failed geocodes unless forced", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geo-map.js"), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8");
     assert.match(source, /previous\.status === "failed"/);
     assert.match(source, /!options\.forceFailed/);
     assert.match(source, /failureRow/);
@@ -48,7 +48,7 @@ test("map source persists and reuses failed geocodes unless forced", () => {
 });
 
 test("map loader rejects a partial Google Maps namespace", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "c04-geo-map.js"), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8");
     assert.match(source, /typeof root\.google\.maps\.Map === "function"/);
     assert.match(source, /root\.google\.maps\.geometry && root\.google\.maps\.marker/);
     assert.match(source, /waitUntil\(ready, src\)/);

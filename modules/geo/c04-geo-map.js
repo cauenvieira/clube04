@@ -1,6 +1,6 @@
 (function (root) {
     "use strict";
-    let map, mapContainer, clusterer, markers = [], selections = [], selectionCounter = 0, selectionCallback, customers = [];
+    let map, mapContainer, clusterer, markers = [], selections = [], selectionCounter = 0, selectionCallback, customers = [], clusterInfo;
     let storeMarker, edgeBox;
     const overlays = {};
     const transport = {}, transportState = {};
@@ -110,30 +110,103 @@
         const colors = root.C04GeoConfig.colors;
         return score >= 75 ? colors.scoreHigh : score >= 50 ? colors.scoreGood : score >= 25 ? colors.scoreMedium : colors.scoreLow;
     }
-    function createClusterer(visible) {
-        clusterer = new markerClusterer.MarkerClusterer({ map: visible ? map : null, markers,
-            algorithmOptions: { maxZoom: 18, radius: root.C04GeoConfig.clusterRadius },
-            renderer: { render: ({ count, position, markers: group }) => {
-                const average = group.reduce((sum, item) => sum + (item.c04Score || 0), 0) / group.length, node = document.createElement("div");
-                node.textContent = count; node.style.cssText = `background:${root.C04GeoConfig.colors.cluster};color:#fff;border:4px solid ${color(average)};border-radius:50%;width:44px;height:44px;display:grid;place-items:center;font:bold 13px Arial;box-shadow:0 2px 8px #0008`;
-                return new google.maps.marker.AdvancedMarkerElement({ position, content: node, zIndex: 1000 + count });
-            } } });
+    function createClusterer(visible, clusterEnabled) {
+        if (!visible) return;
+        if (clusterEnabled !== false) {
+            if (!clusterInfo && typeof google !== "undefined" && google.maps) {
+                clusterInfo = new google.maps.InfoWindow({ disableAutoPan: true });
+            }
+            clusterer = new markerClusterer.MarkerClusterer({ map: map, markers,
+                algorithmOptions: { maxZoom: 18, radius: root.C04GeoConfig.clusterRadius },
+                renderer: { render: ({ count, position, markers: group }) => {
+                    const average = group.reduce((sum, item) => sum + (item.c04Score || 0), 0) / group.length, node = document.createElement("div");
+                    node.textContent = count; node.style.cssText = `background:${root.C04GeoConfig.colors.cluster};color:#fff;border:4px solid ${color(average)};border-radius:50%;width:44px;height:44px;display:grid;place-items:center;font:bold 13px Arial;box-shadow:0 2px 8px #0008;cursor:pointer;`;
+                    
+                    const totalVisits = group.reduce((sum, item) => sum + (item.c04Visits || 0), 0);
+                    const totalSpend = group.reduce((sum, item) => sum + (item.c04Spend || 0), 0);
+                    
+                    const marker = new google.maps.marker.AdvancedMarkerElement({ position, content: node, zIndex: 1000 + count });
+                    
+                    node.onmouseenter = () => {
+                        if (clusterInfo) {
+                            clusterInfo.setContent(`<div style="color: #0f172a !important; font-family: Outfit, Inter, Arial, sans-serif; font-size: 11px; line-height: 1.4; min-width: 140px;">
+                                <b style="color: #0f172a !important; font-size: 12px; font-weight: 700;">Grupo de ${count} clientes</b><br>
+                                <span style="color: #0f172a !important;">Score médio: <strong>${average.toFixed(0)}</strong></span><br>
+                                <span style="color: #0f172a !important;">Visitas totais: <strong>${totalVisits}</strong></span><br>
+                                <span style="color: #0f172a !important;">Receita total: <strong>R$ ${totalSpend.toFixed(0)}</strong></span>
+                            </div>`);
+                            clusterInfo.open(map, marker);
+                        }
+                    };
+                    node.onmouseleave = () => {
+                        if (clusterInfo) clusterInfo.close();
+                    };
+                    
+                    return marker;
+                } } });
+        } else {
+            markers.forEach(marker => { marker.map = map; });
+        }
     }
-    function renderPins(items, visible) {
-        customers = items; if (clusterer) clusterer.clearMarkers(); markers.forEach(item => { item.map = null; }); markers = [];
+    function renderPins(items, visible, clusterEnabled) {
+        const seen = {};
+        const jitteredItems = items.map(customer => {
+            if (!Number.isFinite(customer.lat) || !Number.isFinite(customer.lng)) return customer;
+            const key = `${customer.lat.toFixed(6)},${customer.lng.toFixed(6)}`;
+            if (seen[key] == null) {
+                seen[key] = 0;
+            } else {
+                seen[key]++;
+            }
+            const count = seen[key];
+            if (count > 0) {
+                const angle = (count * 0.1) * 2 * Math.PI;
+                const radius = 0.00003 * Math.sqrt(count);
+                const lat = customer.lat + radius * Math.sin(angle);
+                const lng = customer.lng + (radius * Math.cos(angle)) / Math.cos(lat * Math.PI / 180);
+                return Object.assign({}, customer, { lat, lng });
+            }
+            return customer;
+        });
+
+        customers = jitteredItems;
+        if (clusterer) { clusterer.clearMarkers(); clusterer.setMap(null); clusterer = null; }
+        markers.forEach(item => { item.map = null; }); markers = [];
         const info = new google.maps.InfoWindow();
-        markers = items.map(customer => {
+        markers = jitteredItems.map(customer => {
             const node = document.createElement("div");
-            node.textContent = String(customer.score); node.style.cssText = `width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${root.C04GeoConfig.colors.clientPin};border:4px solid ${color(customer.score)};color:#fff;display:grid;place-items:center;font:bold 9px Arial;box-shadow:0 2px 6px #0006`;
+            node.style.cssText = `width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${root.C04GeoConfig.colors.clientPin};border:4px solid ${color(customer.score)};color:#fff;display:grid;place-items:center;font:bold 9px Arial;box-shadow:0 2px 6px #0006`;
             const glyph = document.createElement("span"); glyph.textContent = String(customer.score); glyph.style.transform = "rotate(45deg)";
             node.textContent = ""; node.appendChild(glyph);
             const marker = new google.maps.marker.AdvancedMarkerElement({ position: { lat: customer.lat, lng: customer.lng }, content: node, title: customer.name });
-            marker.c04Score = customer.score; marker.addListener("click", () => {
-                info.setContent(`<b>${customer.name}</b><br>${customer.neighborhood || ""}<hr>Score: ${customer.score}${customer.scoreConfidence === "low" ? " (baixa confianca)" : ""}<br>Visitas: ${customer.visits}<br>Ticket de servicos realizados: R$ ${customer.ticket.toFixed(2)}<br>Valor de servicos realizados: R$ ${customer.spend.toFixed(2)}`);
+            marker.c04Score = customer.score;
+            marker.c04Visits = customer.visits || 0;
+            marker.c04Spend = customer.spend || 0;
+            marker.addListener("click", () => {
+                 const petsHtml = customer.pets ? `<br><span style="color: #4b5563 !important; font-size: 11px;">Doguinhos: <strong>${customer.pets}</strong></span>` : "";
+                 const phoneHtml = customer.phone ? `<br><span style="color: #4b5563 !important; font-size: 11px;">Tel: <strong>${customer.phone}</strong></span>` : "";
+                 const neighborhoodZipHtml = `${customer.neighborhood || ""}${customer.zip ? ` - CEP: ${customer.zip}` : ""}`;
+                 const lastVisitHtml = customer.lastPurchase ? `<br><span style="color: #0f172a !important;">Última visita: <strong>${customer.lastPurchase}</strong></span>` : "";
+                 const freqHtml = customer.frequency ? `<br><span style="color: #0f172a !important;">Frequência: <strong>${customer.frequency}</strong></span>` : "";
+                 
+                 info.setContent(`<div style="color: #0f172a !important; font-family: Outfit, Inter, Arial, sans-serif; font-size: 12px; line-height: 1.5; min-width: 180px;">
+                     <b style="color: #0f172a !important; font-size: 13px; font-weight: 700;">${customer.name}</b>
+                     ${petsHtml}
+                     ${phoneHtml}
+                     <br><span style="color: #4b5563 !important; font-size: 11px;">${neighborhoodZipHtml}</span>
+                     <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 8px 0;">
+                     <span style="color: #0f172a !important;">Score: <strong>${customer.score}</strong>${customer.scoreConfidence === "low" ? " (baixa confiança)" : ""}</span><br>
+                     <span style="color: #0f172a !important;">Visitas: <strong>${customer.visits}</strong></span>
+                     ${lastVisitHtml}
+                     ${freqHtml}<br>
+                     <span style="color: #0f172a !important;">Ticket de consumo: <strong>R$ ${customer.ticket.toFixed(2)}</strong></span><br>
+                     <span style="color: #0f172a !important;">Receita consumida: <strong>R$ ${customer.spend.toFixed(2)}</strong></span>
+                 </div>`);
                 info.open(map, marker);
             }); return marker;
         });
-        createClusterer(visible);
+        createClusterer(visible, clusterEnabled);
+        addReferenceObjects();
         updateEdges();
     }
     function heatLayer(metric) {
@@ -148,7 +221,10 @@
     }
     function setLayers(state) {
         lastLayerState = Object.assign({}, state);
-        if (clusterer) { clusterer.clearMarkers(); clusterer.setMap(null); createClusterer(state.pins); }
+        if (clusterer) { clusterer.clearMarkers(); clusterer.setMap(null); clusterer = null; }
+        // Compatibility: clearMarkers(); clusterer.setMap(null); createClusterer(state.pins)
+        markers.forEach(marker => { marker.map = null; });
+        createClusterer(state.pins, state.cluster);
         ["visits", "spend", "score"].forEach(metric => {
             if (overlays[metric]) overlays[metric].finalize();
             overlays[metric] = state[metric] ? new deck.GoogleMapsOverlay({ layers: [heatLayer(metric)] }) : null;
@@ -156,6 +232,7 @@
         });
     }
     function addReferenceObjects() {
+        if (storeMarker) { storeMarker.map = null; storeMarker = null; }
         const config = root.C04GeoConfig, position = config.center;
         const pin = new google.maps.marker.PinElement({ background: root.C04GeoConfig.colors.storePin, borderColor: "#fff", glyphColor: "#fff", glyphText: "C04", scale: 1.4 });
         pin.style.fontSize = "8px";
@@ -191,7 +268,7 @@
         const center = map.getCenter(), zoom = map.getZoom();
         map = new google.maps.Map(mapContainer, Object.assign(options, { center, zoom }));
         selections.forEach(item => { item.shape.setMap(map); item.close.map = map; });
-        addReferenceObjects(); addRecenterControl(); renderPins(customers, lastLayerState.pins); setLayers(lastLayerState);
+        addReferenceObjects(); addRecenterControl(); addSatelliteControl(); renderPins(customers, lastLayerState.pins); setLayers(lastLayerState);
         Object.keys(transport).forEach(name => transport[name].setMap(transportState[name] ? map : null));
         map.addListener("idle", updateEdges);
     }
@@ -206,6 +283,46 @@
         button.type = "button"; button.title = "Centralizar no Clube04"; button.setAttribute("aria-label", "Centralizar no Clube04");
         button.textContent = ""; button.style.cssText = "background:radial-gradient(circle,#f97316 0 3px,#fff 4px 8px,#292524 9px 11px,#fff 12px);border:0;border-radius:2px;margin:10px;width:40px;height:40px;box-shadow:0 1px 4px #0006;cursor:pointer";
         button.onclick = recenter; map.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(button);
+    }
+    const SVG_MAP = `<svg viewBox="0 0 24 24" width="18" height="18" stroke="#38bdf8" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>`;
+    const SVG_SATELLITE = `<svg viewBox="0 0 24 24" width="18" height="18" stroke="#f97316" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+    let satelliteMode = false;
+    function addSatelliteControl() {
+        const checkbox = document.getElementById("c04-satellite");
+        satelliteMode = checkbox ? checkbox.checked : false;
+        const button = document.createElement("button");
+        button.type = "button"; button.title = "Alternar Satélite"; button.setAttribute("aria-label", "Alternar Satélite");
+        const iconHtml = satelliteMode ? SVG_MAP : SVG_SATELLITE;
+        const labelText = satelliteMode ? "Mapa" : "Satélite";
+        button.innerHTML = `
+            <div id="c04-satellite-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; position: relative; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); padding-bottom: 8px;">
+                <div id="c04-satellite-icon-wrapper" style="flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 4px;">
+                    ${iconHtml}
+                </div>
+                <div id="c04-satellite-label" style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(15,23,42,0.9); color: #fff; font-size: 8px; font-weight: 600; text-align: center; padding: 2px 0; font-family: Outfit, sans-serif; text-transform: uppercase;">${labelText}</div>
+            </div>
+        `;
+        button.style.cssText = "background:none;border:0;padding:0;margin:10px;cursor:pointer;transition:transform 0.15s;";
+        button.onmouseover = () => button.style.transform = "scale(1.05)";
+        button.onmouseout = () => button.style.transform = "scale(1)";
+        button.onclick = () => {
+            satelliteMode = !satelliteMode;
+            setMapType(satelliteMode ? "satellite" : "roadmap");
+            if (checkbox) {
+                checkbox.checked = satelliteMode;
+                checkbox.dispatchEvent(new Event("change"));
+            }
+            const wrapper = button.querySelector("#c04-satellite-icon-wrapper");
+            const label = button.querySelector("#c04-satellite-label");
+            if (satelliteMode) {
+                wrapper.innerHTML = SVG_MAP;
+                label.textContent = "Mapa";
+            } else {
+                wrapper.innerHTML = SVG_SATELLITE;
+                label.textContent = "Satélite";
+            }
+        };
+        map.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(button);
     }
     function resize() { if (map) google.maps.event.trigger(map, "resize"); }
     function diagnostics() {
@@ -281,11 +398,12 @@
         await load(); const config = root.C04GeoConfig; mapContainer = container;
         map = new google.maps.Map(container, mapOptions());
         edgeBox = document.createElement("div"); edgeBox.className = "c04-map-edges"; container.parentElement.appendChild(edgeBox);
-        addReferenceObjects(); addRecenterControl(); map.addListener("idle", updateEdges);
+        addReferenceObjects(); addRecenterControl(); addSatelliteControl(); map.addListener("idle", updateEdges);
     }
     function destroy() {
         selectionCallback = null; clearSelection(); if (clusterer) clusterer.clearMarkers(); Object.values(overlays).forEach(item => item && item.finalize());
         if (storeMarker) storeMarker.map = null;
+        if (clusterInfo) { clusterInfo.close(); clusterInfo = null; }
         if (edgeBox) edgeBox.remove(); clusterer = null; markers = []; customers = []; map = null; mapContainer = null;
     }
     root.C04GeoMap = { init, geocode, validateGeocode, diagnosticGeocode, renderPins, setLayers, setTransport, setMapType, recenter, resize, diagnostics,

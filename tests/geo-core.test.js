@@ -1,8 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const core = require("../c04-geo-core.js");
-
+const core = require("../modules/geo/c04-geo-core.js");
 test("parse CSV with quoted delimiters and normalized headers", () => {
     const rows = core.parseCsv('Cliente;Endereco;Valor Gasto\n"Ana";"Rua A, 10";"R$ 240,00"\n');
     assert.equal(rows.length, 1);
@@ -119,4 +118,12 @@ test("protects full scan using the normalized visible user name", () => {
     assert.equal(core.canRunFullScan(" caue "), true);
     assert.equal(core.canRunFullScan("Outro usuario"), false);
     assert.equal(core.canRunFullScan(""), false);
+});
+
+test("normalizes CEPs to xxxxx-xxx and pads 7-digit ones with 0", () => {
+    assert.equal(core.formatZip("8700000"), "08700-000");
+    assert.equal(core.formatZip("08700000"), "08700-000");
+    assert.equal(core.formatZip("08700-000"), "08700-000");
+    assert.equal(core.formatZip("abc"), "abc");
+    assert.equal(core.formatZip(""), "");
 });

@@ -88,10 +88,13 @@
     }
     async function collectAllTable(frame, table, token) {
         const doc = frame.contentDocument, expected = infoTotal(doc, table), api = dataTableApi(frame, table);
+        const initialRows = tableRecords(table);
+        if (initialRows.length === expected) {
+            return { rows: initialRows, expected, mode: "visible" };
+        }
         if (!api) {
-            const rows = tableRecords(table);
-            if (rows.length !== expected) throw new Error(`Coleta parcial em ${table.id}: ${rows.length} de ${expected}.`);
-            return { rows, expected, mode: "visible" };
+            if (initialRows.length !== expected) throw new Error(`Coleta parcial em ${table.id}: ${initialRows.length} de ${expected}.`);
+            return { rows: initialRows, expected, mode: "visible" };
         }
         try {
             api.page.len(-1).draw(); await waitStable(doc, table, token);
@@ -121,7 +124,7 @@
         const spend = products.filter(item => !isPackageProduct(core.field(item, "customer") || item.Produto || item.produto))
             .reduce((total, item) => total + core.parseMoney(core.field(item, "spend")), 0);
         return { visits, spend, ticket: visits ? spend / visits : 0, intervalDays: core.parseFrequencyDays(core.field(sale, "frequency")),
-            lastPurchase: core.field(sale, "date"), reportedSpend: core.parseMoney(core.field(sale, "spend")) };
+            frequency: core.field(sale, "frequency"), lastPurchase: core.field(sale, "date"), reportedSpend: core.parseMoney(core.field(sale, "spend")) };
     }
     async function collectSales(period, token, progress) {
         const opened = await openSales(period, token), frame = opened.frame, doc = frame.contentDocument;
@@ -131,6 +134,15 @@
             for (let index = 0; index < active.length; index += 1) {
                 cancelled(token);
                 const row = active[index], idPessoa = root.C04GeoCore.field(row, "id");
+                const visitsVal = root.C04GeoCore.field(row, "purchases");
+                const visits = Number.parseInt(visitsVal, 10) || 0;
+                 const spendVal = root.C04GeoCore.field(row, "spend");
+                 const spend = root.C04GeoCore.parseMoney(spendVal) || 0;
+                 if (visits === 0) {
+                     details.set(String(idPessoa), []);
+                     if (progress) progress(index + 1, active.length);
+                     continue;
+                 }
                 const previous = doc.querySelector(SALES.products);
                 frame.contentWindow.detalhesProdutoCliente(idPessoa);
                 const table = previous ? await waitForReplacement(frame, SALES.products, previous, 30000, token) :
@@ -188,8 +200,10 @@
     }
     function pendingItem(source, reason, message, record) {
         const core = root.C04GeoCore;
-        return { pendingId: core.hash(`${source}|${reason}|${core.field(record, "id")}|${message}`), source, reason, message,
-            idPessoa: core.field(record, "id"), customerName: core.field(record, "customer"), status: "open" };
+        const id = core.field(record, "id") || core.field(record, "customer") || "unknown";
+        return { pendingId: core.hash(`Pendencia|${id}`), source, reason, message,
+            idPessoa: core.field(record, "id"), customerName: core.field(record, "customer"), status: "open",
+            createdAt: new Date().toISOString() };
     }
     function persistentCustomer(idPessoa, sale, csvRows) {
         const core = root.C04GeoCore, first = csvRows[0] || {};
@@ -220,6 +234,7 @@
         const counts = { pertinent: sales.length, accepted: 0, rejected: 0, minimal: 0 };
         sales.forEach(sale => {
             const idPessoa = core.field(sale, "id"), match = matchCsvSale(sale, indexes), matches = match.rows;
+            let hasPending = false;
             if (!idPessoa) {
                 counts.rejected += 1; pending.push(pendingItem("Clientes", "identificador_invalido", "Cliente pertinente sem idPessoa.", sale)); return;
             }
@@ -228,15 +243,24 @@
                     "Tutor sem telefone possui cadastros divergentes no CSV; registro minimo criado." :
                     "Cadastro nao encontrado no CSV; registro minimo criado.", sale));
                 counts.minimal += 1;
+                hasPending = true;
             }
-            const customer = applyOverride(persistentCustomer(idPessoa, sale, matches), overrides);
-            const metrics = commercialMetrics(sale, details.get(String(idPessoa)) || []);
+             const customer = applyOverride(persistentCustomer(idPessoa, sale, matches), overrides);
+             const customerPets = [];
+             matches.forEach(row => {
+                 const pet = core.field(row, "pet");
+                 if (pet && !customerPets.includes(pet)) customerPets.push(pet);
+             });
+             customer.pets = customerPets.join(", ");
+             const metrics = commercialMetrics(sale, details.get(String(idPessoa)) || []);
             if (core.normalize(customer.status) === "inativa") {
                 counts.rejected += 1; pending.push(pendingItem("Clientes", "cliente_inativo", "Cliente explicitamente inativo no CSV.", sale)); return;
             }
             counts.accepted += 1;
             persistent.push(customer);
-            if (!customer.address) pending.push(pendingItem("Geocodificacao", "endereco_ausente", "Endereco ou CEP insuficiente no CSV.", sale));
+            if (!hasPending && !customer.address) {
+                pending.push(pendingItem("Geocodificacao", "endereco_ausente", "Endereco ou CEP insuficiente no CSV.", sale));
+            }
             matches.forEach(row => {
                 const pet = core.field(row, "pet");
                 if (pet && !pets.some(item => item.idPessoa === String(idPessoa) && item.name === pet))
