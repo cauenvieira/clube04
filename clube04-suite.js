@@ -8,7 +8,7 @@
     const ENV_CONFIG = {
         LOCAL_ROOT: 'http://127.0.0.1:8080/',
         PROD_ROOT:  'https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/',
-        TIMEOUT_MS: 50
+        TIMEOUT_MS: 1200
     };
 
     const LAYOUT_CONFIG = { mainColor: '#000000', accentColor: '#ff6600', suiteName: 'SUITE • CB04 • MOGI •' };
@@ -16,12 +16,15 @@
     const tools = [
         { id: 'metas',    icon: '🚀', color: '#2563eb', tooltip: 'Metas',    script: 'c04-metas.js' },
         { id: 'ponto',    icon: '🕒', color: '#10b981', tooltip: 'Ponto',    script: 'c04-ponto.js' },
+        { id: 'geolocalizacao', icon: 'GEO', color: '#ea580c', tooltip: 'Geolocalizacao', script: 'c04-geolocalizacao.js' },
         // { id: 'agenda',   icon: '📅', color: '#f59e0b', tooltip: 'Agenda',   script: 'c04-agenda.js' },
         // { id: 'ocupacao', icon: '📊', color: '#8b5cf6', tooltip: 'Ocupação', script: 'c04-ocupacao.js' },
         // { id: 'monitor',  icon: '👁️', color: '#dc2626', tooltip: 'Monitor 360º', script: 'c04-monitor.js' }
     ];
 
-    let ACTIVE_BASE_URL = null;
+    const CURRENT_SUITE_URL = document.currentScript && document.currentScript.src || "";
+    let ACTIVE_BASE_URL = CURRENT_SUITE_URL.includes("127.0.0.1:8080") ? ENV_CONFIG.LOCAL_ROOT :
+        CURRENT_SUITE_URL.includes("cdn.jsdelivr.net") ? ENV_CONFIG.PROD_ROOT : null;
 
 async function initEnvironment() {
         if (ACTIVE_BASE_URL) return ACTIVE_BASE_URL;
@@ -70,7 +73,7 @@ async function initEnvironment() {
         window.dispatchEvent(new Event('c04_global_teardown'));
         
         // 2. Remove fisicamente os elementos do DOM
-        const ids = ['c04-painel', 'c04-monitor-painel', 'c04-ponto-painel', 'c04-painel-agenda', 'c04-painel-ocup'];
+        const ids = ['c04-painel', 'c04-monitor-painel', 'c04-ponto-painel', 'c04-painel-agenda', 'c04-painel-ocup', 'c04-geo-panel'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.remove(); // Deleta o elemento, não apenas esconde

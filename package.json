@@ -1,0 +1,8 @@
+{
+  "name": "clube04-tampermonkey-suite",
+  "private": true,
+  "scripts": {
+    "dev": "npx http-server --cors -c-1 -p 8080",
+    "verify:all": "node --test tests/*.test.js && node --check clube04-suite.js && node --check c04-geolocalizacao.js && node --check c04-geo-config.js && node --check c04-geo-core.js && node --check c04-geo-sheets.js && node --check c04-geo-data.js && node --check c04-geo-map.js"
+  }
+}
