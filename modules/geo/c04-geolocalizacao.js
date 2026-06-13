@@ -151,6 +151,8 @@
         /* Fix google maps info window text color */
         .gm-style .gm-style-iw { color: #0f172a !important; }
         .gm-style .gm-style-iw * { color: #0f172a !important; }
+        .c04-pending-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+        .c04-pending-actions .c04-btn { padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; }
         `;
         document.head.appendChild(node);
     }
@@ -224,9 +226,10 @@
         const node = document.getElementById("c04-general-summary");
         if (!node) return;
         const mapped = visibleCustomers.filter(item => Number.isFinite(item.lat));
-        const gen = root.C04GeoCore.selectionSummary(mapped);
+        const end = document.getElementById("c04-end")?.value;
+        const gen = root.C04GeoCore.selectionSummary(mapped, end);
         const hasSel = selected && selected.length > 0;
-        const sel = hasSel ? root.C04GeoCore.selectionSummary(selected) : null;
+        const sel = hasSel ? root.C04GeoCore.selectionSummary(selected, end) : null;
         const fmt = (val, isCurrency, isDays) => {
             if (val == null) return "-";
             if (isCurrency) return `R$ ${val.toFixed(0)}`;
@@ -433,6 +436,97 @@
             `<tr><td>${esc(item.timestamp || "")}</td><td>${esc(item.source || "")}</td><td>${esc(item.reason || "")}</td><td>${esc(item.message || "")}</td></tr>`).join("");
         document.getElementById("c04-log-modal").classList.add("open");
     }
+    const PENDING_MAP = {
+        identificador_invalido: {
+            motivo: "Identificador Inválido",
+            solucao: "O cliente possui vendas registradas mas está sem o ID único (idPessoa). Verifique e corrija no sistema.",
+        },
+        cliente_inativo: {
+            motivo: "Cadastro Inativo",
+            solucao: "O cliente está marcado como Inativo no arquivo CSV de clientes. Reative o cadastro se necessário.",
+        },
+        nome_duplicado: {
+            motivo: "Duplicidade de Nome",
+            solucao: "Existem múltiplos cadastros com o mesmo nome e sem telefone. Adicione um telefone celular para diferenciá-los.",
+        },
+        cliente_nao_encontrado: {
+            motivo: "Cadastro Não Encontrado",
+            solucao: "A venda refere-se a um cliente não localizado no CSV exportado. Verifique se o nome/telefone no sistema estão corretos.",
+        },
+        endereco_ausente: {
+            motivo: "Endereço Ausente",
+            solucao: "O CEP ou logradouro está em branco no cadastro do cliente. Preencha os dados de endereço no sistema.",
+        },
+        fora_do_raio: {
+            motivo: "Fora do Raio Limite",
+            solucao: "O endereço retornado pelo Google fica muito longe da unidade. Verifique se a cidade ou estado do cadastro estão corretos.",
+        },
+        resultado_parcial: {
+            motivo: "CEP ou Número Divergente",
+            solucao: "O Google Maps encontrou apenas uma aproximação (número inexistente ou CEP incorreto). Corrija no cadastro.",
+        },
+        estado_invalido: {
+            motivo: "Estado Inválido",
+            solucao: "O endereço geocodificado fica fora do estado cadastrado (São Paulo - SP). Corrija o estado no sistema.",
+        },
+        pais_invalido: {
+            motivo: "País Inválido",
+            solucao: "O endereço geocodificado fica fora do Brasil. Corrija o país ou endereço no sistema.",
+        }
+    };
+
+    function getTechnicalDetails(item) {
+        const r = item.record || {};
+        const inputAddr = r.customer ? `${r.customer.street || ""}, ${r.customer.number || ""}, ${r.customer.neighborhood || ""}, ${r.customer.city || ""} - ${r.customer.zip || ""}` : "";
+        const foundAddr = r.formattedAddress || "não encontrado";
+        const distance = typeof r.distanceKm === "number" ? `${r.distanceKm.toFixed(2)} km` : "N/A";
+        
+        let tech = `[Módulo GEO - Analisador Técnico]\n`;
+        tech += `ID da Pendência: ${item.pendingId}\n`;
+        tech += `Origem da Validação: ${item.source}\n`;
+        tech += `Código de Erro (Reason): ${item.reason}\n`;
+        tech += `ID do Cliente (idPessoa): ${item.idPessoa || "N/A"}\n`;
+        tech += `Nome do Cliente: ${item.customerName || "N/A"}\n\n`;
+        
+        if (item.source === "Geocodificacao") {
+            tech += `--- ANÁLISE DA GEOCODIFICAÇÃO ---\n`;
+            tech += `Endereço no Cadastro: "${inputAddr}"\n`;
+            tech += `Endereço Retornado pelo Google: "${foundAddr}"\n`;
+            tech += `Distância Calculada até a Unidade: ${distance}\n`;
+            tech += `Limite Máximo de Distância Permitido: ${root.C04GeoConfig.geocodeMaxDistanceKm} km\n`;
+            tech += `Tipo do Erro Geográfico: ${item.reason === "fora_do_raio" ? "Endereço localizado muito distante (Fora do Raio)" :
+                      item.reason === "resultado_parcial" ? "Correspondência Parcial da API do Google ou CEP divergente" :
+                      item.reason === "estado_invalido" ? "Localizado fora do Estado (SP)" :
+                      item.reason === "pais_invalido" ? "Localizado fora do País (Brasil)" : "Inconsistência genérica de endereço"}\n\n`;
+            tech += `--- REGRA APLICADA ---\n`;
+            if (item.reason === "fora_do_raio") {
+                tech += `Regra: A distância entre a coordenada retornada (${distance}) e o centro configurado supera o raio limite de ${root.C04GeoConfig.geocodeMaxDistanceKm} km. O marcador é bloqueado no mapa para evitar distorções de escala.`;
+            } else if (item.reason === "resultado_parcial") {
+                tech += `Regra: O Google Maps retornou flag 'partial_match' como verdadeiro ou o CEP retornado no resultado não bate com o CEP digitado. Isso indica que a rua foi localizada, mas o número do imóvel ou o CEP estão incorretos no cadastro.`;
+            } else if (item.reason === "estado_invalido") {
+                tech += `Regra: O estado retornado pelo geocodificador não é "SP". O sistema aceita apenas endereços no estado de São Paulo.`;
+            } else if (item.reason === "pais_invalido") {
+                tech += `Regra: O país retornado não é "Brasil". O sistema aceita apenas endereços nacionais.`;
+            }
+        } else {
+            tech += `--- ANÁLISE DE CRUZAMENTO DE DADOS ---\n`;
+            tech += `Mensagem de Erro: "${item.message}"\n\n`;
+            tech += `--- REGRA APLICADA ---\n`;
+            if (item.reason === "identificador_invalido") {
+                tech += `Regra: O registro de venda importado de relcliente.php não possui um valor para 'idPessoa'. Não é possível associar a compra a nenhuma pessoa no banco de dados.`;
+            } else if (item.reason === "cliente_inativo") {
+                tech += `Regra: O cliente correspondente foi localizado no CSV de clientes, mas possui a coluna 'Status' definida como 'Inativa'. O GEO ignora clientes inativos para manter as camadas analíticas focadas em clientes ativos.`;
+            } else if (item.reason === "nome_duplicado") {
+                tech += `Regra: A venda do cliente não possui telefone e existem múltiplos registros de clientes com o mesmo nome na base do CSV. Como não há chave de telefone ou CPF para desambiguação, o sistema gera um registro mínimo para a venda em vez de misturar dados.`;
+            } else if (item.reason === "endereco_ausente") {
+                tech += `Regra: O cliente foi localizado no CSV, mas o endereço está completamente em branco. Sem CEP ou Rua, o script não envia o registro para geocodificação da API do Google.`;
+            } else {
+                tech += `Regra: Inconsistência no cruzamento de dados. O registro de venda em relcliente.php não encontrou uma correspondência de Nome + Telefone no arquivo cliente.csv.`;
+            }
+        }
+        return tech;
+    }
+
     async function showPendings() {
         let rows;
         try { rows = await root.C04GeoSheets.pendings({}); }
@@ -443,9 +537,6 @@
             return;
         }
         const renderRows = () => {
-            const reasonLabels = { cliente_nao_encontrado: "Cadastro nao cruzado", cliente_inativo: "Cliente inativo",
-                endereco_ausente: "Endereco ausente", resultado_parcial: "Geocodificacao parcial", fora_do_raio: "Fora do raio",
-                estado_invalido: "Estado invalido", pais_invalido: "Pais invalido" };
             const status = document.getElementById("c04-pending-status").value, source = root.C04GeoCore.normalize(document.getElementById("c04-pending-source").value);
             const reason = root.C04GeoCore.normalize(document.getElementById("c04-pending-reason").value), body = document.getElementById("c04-pending-body");
             const filtered = rows.filter(item => (!status || (item.status || "open") === status) && (!source || root.C04GeoCore.normalize(item.source).includes(source)) && (!reason || root.C04GeoCore.normalize(item.reason).includes(reason)));
@@ -454,7 +545,27 @@
                 const pad = n => String(n).padStart(2, "0");
                 const dateStr = date && !Number.isNaN(date.getTime()) ?
                     `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` : "";
-                return `<tr><td>${esc(dateStr)}</td><td>${esc(item.status || "open")}</td><td>${esc(item.source || "")}</td><td>${esc(reasonLabels[item.reason] || item.reason || "")}</td><td>${esc(item.customerName || "")}</td><td>${esc(item.message || "")}</td><td><button class="c04-btn alt c04-open-person" data-person="${esc(item.idPessoa || "")}">Abrir cadastro</button> <button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}">Tratar</button>${item.status !== "open" ? ` <button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}">Reabrir</button>` : ""}</td></tr>`;
+                
+                const info = PENDING_MAP[item.reason] || {
+                    motivo: item.reason || "Não Mapeado",
+                    solucao: "Analise os detalhes técnicos no botão avançado para identificar a inconsistência no cadastro."
+                };
+                const statusColor = (item.status === "resolved") ? "#10b981" : (item.status === "ignored") ? "#64748b" : "#f59e0b";
+                const statusText = (item.status === "resolved") ? "Resolvida" : (item.status === "ignored") ? "Ignorada" : "Aberta";
+                
+                return `<tr>
+                    <td style="white-space: nowrap; color: #94a3b8; font-size: 11px;">${esc(dateStr)}</td>
+                    <td style="color: #cbd5e1; font-weight: 500;">${esc(item.source || "")} <span style="font-size: 9px; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${statusColor}; border: 1px solid ${statusColor}44; margin-left: 4px;">${statusText}</span></td>
+                    <td style="color: #fb923c; font-weight: 600; font-size: 12px;">${esc(info.motivo)}</td>
+                    <td style="color: #f8fafc; font-weight: 600;">${esc(item.customerName || "")}</td>
+                    <td style="color: #cbd5e1; font-size: 12px; max-width: 250px;">${esc(info.solucao)}</td>
+                    <td><button class="c04-btn alt c04-open-tech" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px;">Ver Técnico</button></td>
+                    <td style="text-align: right;"><div class="c04-pending-actions" style="justify-content: flex-end;">
+                        <button class="c04-btn alt c04-open-person" data-person="${esc(item.idPessoa || "")}">Cadastro</button>
+                        <button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}">Tratar</button>
+                        ${item.status !== "open" ? `<button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}">Reabrir</button>` : ""}
+                    </div></td>
+                </tr>`;
             }).join("");
         body.querySelectorAll(".c04-open-person").forEach(button => { button.onclick = () => {
             if (!button.dataset.person) return alert("Pendencia sem idPessoa.");
@@ -464,6 +575,14 @@
         body.querySelectorAll(".c04-reopen").forEach(button => { button.onclick = async () => {
             const justification = prompt("Justificativa para reabrir:"); if (!justification) return;
             await root.C04GeoSheets.reopenPending({ pendingId: button.dataset.id, visibleUser: visibleUser(), justification }); showPendings();
+            }; });
+        body.querySelectorAll(".c04-open-tech").forEach(button => { button.onclick = () => {
+            const pendingId = button.dataset.id;
+            const item = rows.find(r => r.pendingId === pendingId);
+            if (!item) return;
+            const content = document.getElementById("c04-tech-content");
+            content.textContent = getTechnicalDetails(item);
+            document.getElementById("c04-tech-modal").classList.add("open");
             }; });
         };
         ["c04-pending-status", "c04-pending-source", "c04-pending-reason"].forEach(id => { document.getElementById(id).oninput = renderRows; });
@@ -1038,9 +1157,13 @@
                 <!-- Grupo 2: Camadas Analíticas -->
                 <div class="c04-side-group" id="c04-geo-layers">
                     <h4>Camadas analiticas</h4>
-                    <div class="c04-check-grid">
+                    <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">Elementos do Mapa (Múltipla Escolha)</div>
+                    <div class="c04-check-grid" style="margin-bottom: 12px;">
                         <label><input id="c04-layer-pins" type="checkbox" checked> Pins</label>
                         <label><input id="c04-layer-cluster" type="checkbox"> Cluster de pins</label>
+                    </div>
+                    <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em; border-top: 1px dashed rgba(255,255,255,0.08); padding-top: 8px;">Mapa de Calor (Selecione apenas 1)</div>
+                    <div class="c04-check-grid">
                         <label><input id="c04-layer-visits" type="checkbox"> Visitas</label>
                         <label><input id="c04-layer-spend" type="checkbox"> Receita consumida<!-- Valor de servicos --></label>
                         <label><input id="c04-layer-score" type="checkbox" checked> Score</label>
@@ -1212,7 +1335,40 @@
         <div class="c04-tab-panel" id="c04-tab-advanced">${root.C04GeoCore.canRunFullScan(visibleUser()) ? `<button class="c04-btn danger" id="c04-full">Varredura completa</button> <button class="c04-btn alt" id="c04-migration-preview">Previa da reconstrucao</button> <button class="c04-btn danger" id="c04-reset-database">Limpar banco GEO</button>` : "<p>Opcoes avancadas restritas.</p>"}</div>`)}
         ${modal("c04-list-modal","Clientes selecionados",`<table class="c04-table"><thead><tr><th>Cliente</th><th>Bairro</th><th>Visitas</th><th>Ticket</th><th>Gasto</th><th>Score</th></tr></thead><tbody id="c04-list-body"></tbody></table>`)}
         ${modal("c04-log-modal","Historico e logs",`<h4>Execucoes</h4><table class="c04-table"><thead><tr><th>Inicio</th><th>Tipo</th><th>Status</th><th>Periodo</th></tr></thead><tbody id="c04-log-body"></tbody></table><h4>Pendencias detalhadas</h4><table class="c04-table"><thead><tr><th>Data</th><th>Fonte</th><th>Motivo</th><th>Mensagem</th></tr></thead><tbody id="c04-log-detail-body"></tbody></table>`)}
-        ${modal("c04-pending-modal","Central de pendencias",`<p>As correcoes afetam somente o modulo GEO.</p><div class="c04-grid"><label>Status<select id="c04-pending-status"><option value="">Todos</option><option>open</option><option>resolved</option><option>ignored</option></select></label><label>Fonte<input id="c04-pending-source"></label><label>Motivo<input id="c04-pending-reason"></label></div><table class="c04-table"><thead><tr><th>Data</th><th>Status</th><th>Fonte</th><th>Motivo</th><th>Cliente</th><th>Detalhe</th><th>Acao</th></tr></thead><tbody id="c04-pending-body"></tbody></table>`)}
+        ${modal("c04-pending-modal","Central de pendencias",`
+            <p style="margin-top: 0; margin-bottom: 16px; color: #94a3b8; font-size: 13px;">As correções afetam somente as visualizações e filtros do módulo GEO.</p>
+            <div class="c04-grid" style="margin-bottom: 16px;">
+                <label>Status
+                    <select id="c04-pending-status" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;">
+                        <option value="">Todos</option>
+                        <option value="open">Abertas</option>
+                        <option value="resolved">Resolvidas</option>
+                        <option value="ignored">Ignoradas</option>
+                    </select>
+                </label>
+                <label>Fonte<input id="c04-pending-source" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;"></label>
+                <label>Motivo<input id="c04-pending-reason" style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:8px;font-size:13px;outline:none;"></label>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="c04-table">
+                    <thead>
+                        <tr>
+                            <th style="white-space: nowrap;">Data</th>
+                            <th>Fonte</th>
+                            <th>Motivo</th>
+                            <th>Cliente</th>
+                            <th>Solução Recomendada</th>
+                            <th>Avançado</th>
+                            <th style="text-align: right;">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="c04-pending-body"></tbody>
+                </table>
+            </div>
+        `)}
+        ${modal("c04-tech-modal","Detalhes Técnicos da Decisão",`
+            <div id="c04-tech-content" style="font-family: monospace; white-space: pre-wrap; font-size: 12px; background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); max-height: 400px; overflow-y: auto; color: #cbd5e1; line-height: 1.6;"></div>
+        `)}
         ${modal("c04-full-modal","Confirmar varredura completa",`<p class="c04-error"><b>Esta operacao pode consumir cota da Geocoding API.</b></p><p id="c04-full-estimate"></p><label>Digite VARREDURA para confirmar <input id="c04-full-confirm"></label><div class="c04-actions"><button class="c04-btn danger c04-sync" id="c04-run-full" disabled>Executar varredura completa</button></div>`)}
         ${modal("c04-reset-modal","Confirmar limpeza do banco GEO",`<p class="c04-error"><b>Esta operacao remove somente os dados controlados pelo modulo GEO.</b></p><label>Digite LIMPAR BANCO GEO para confirmar <input id="c04-reset-confirm"></label><div class="c04-actions"><button class="c04-btn danger" id="c04-run-reset" disabled>Limpar banco GEO</button></div>`)}
         `; document.body.appendChild(panel); loadSidebarPreferences(); bind();

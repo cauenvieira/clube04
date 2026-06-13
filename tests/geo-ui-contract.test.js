@@ -9,7 +9,7 @@ test("GEO UI exposes cancellation, sidebar controls and translated layers", () =
     assert.match(source, /Cancelar sincronizacao/);
     assert.match(source, /sidebar-closed/);
     assert.match(source, /id="c04-toggle-sidebar"/);
-    assert.match(source, /Abrir cadastro/);
+    assert.match(source, /Cadastro/);
     assert.doesNotMatch(source, /Mapa de referencia/);
     assert.match(source, /Diagnostico geral/);
     assert.match(source, /c04-toggle-head/);

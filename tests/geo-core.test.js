@@ -119,6 +119,32 @@ test("summarizes regional selection excluding single-visit customers from freque
     assert.equal(summary.frequencyMedian, 10);
 });
 
+test("formats date strings into Brazilian format properly", () => {
+    assert.equal(core.formatBrazilianDate("2026-06-13 16:40:06"), "13/06/2026 16:40:06");
+    assert.equal(core.formatBrazilianDate("2026-06-13"), "13/06/2026");
+    assert.equal(core.formatBrazilianDate("13/06/2026 16:40:06"), "13/06/2026 16:40:06");
+    assert.equal(core.formatBrazilianDate("2026-06-03 18:42:0103/06/202618:42:01"), "03/06/2026 18:42:01");
+    assert.equal(core.formatBrazilianDate(""), "");
+    assert.equal(core.formatBrazilianDate(null), "");
+});
+
+test("summarizes regional selection including single-visit customer if interval to end date is >= 45 days", () => {
+    const rows = [
+        { name: "Ana", visits: 3, intervalDays: 10, spend: 500, ticket: 250, score: 80, recurrence: { label: "Excelente" } },
+        { name: "Beto", visits: 1, lastPurchase: "2026-04-01", spend: 100, ticket: 100, score: 40, recurrence: { label: "Única visita no período" } }, // 50 days to 2026-05-21
+        { name: "Carlos", visits: 1, lastPurchase: "2026-05-10", spend: 100, ticket: 100, score: 40, recurrence: { label: "Única visita no período" } } // 11 days to 2026-05-21
+    ];
+    const summary = core.selectionSummary(rows, "2026-05-21");
+    // Ana has 10 days frequency
+    // Beto has 50 days frequency (>= 45 days, so included)
+    // Carlos has 11 days frequency (< 45 days, so excluded)
+    // Included frequencies: [10, 50]
+    // Average: 30, Median: 30
+    assert.equal(summary.count, 3);
+    assert.equal(summary.frequencyAverage, 30);
+    assert.equal(summary.frequencyMedian, 30);
+});
+
 test("extracts idPessoa and requires it as the customer key", () => {
     assert.equal(core.extractPessoaId("redirecionarPessoaEditar('26888', '2')"), "26888");
     assert.equal(core.customerKey({ idPessoa: "26888", Nome: "Yago" }), "id:26888");

@@ -82,6 +82,23 @@
         }
         return "";
     }
+    function formatBrazilianDate(value) {
+        const text = String(value == null ? "" : value).trim();
+        if (!text) return "";
+        const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
+        if (isoMatch) {
+            const [, year, month, day, hour, minute, second] = isoMatch;
+            const timeStr = hour ? ` ${hour}:${minute}:${second}` : "";
+            return `${day}/${month}/${year}${timeStr}`;
+        }
+        const brMatch = text.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s*(\d{2}):(\d{2}):(\d{2}))?/);
+        if (brMatch) {
+            const [, day, month, year, hour, minute, second] = brMatch;
+            const timeStr = hour ? ` ${hour}:${minute}:${second}` : "";
+            return `${day}/${month}/${year}${timeStr}`;
+        }
+        return text;
+    }
     function customerKey(record) {
         const id = field(record, "id");
         if (id) return `id:${normalize(id)}`;
@@ -186,10 +203,31 @@
         const start = new Date(end); start.setMonth(start.getMonth() - months);
         return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
     }
-    function selectionSummary(customers) {
+    function selectionSummary(customers, endDate) {
         const count = customers.length;
         const sum = (key) => customers.reduce((total, item) => total + (Number(item[key]) || 0), 0);
-        const frequencies = customers.filter(item => Number(item.visits) >= 2).map(item => Number(item.intervalDays)).filter(Number.isFinite).sort((a, b) => a - b);
+        const end = parseDate(endDate);
+        const frequencies = customers.map(item => {
+            let interval = Number(item.intervalDays);
+            if (Number(item.visits) === 1 && end && item.lastPurchase) {
+                const visitDate = parseDate(item.lastPurchase);
+                if (visitDate) {
+                    const diffTime = end - visitDate;
+                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    if (diffDays >= 45) {
+                        interval = diffDays;
+                    } else {
+                        interval = NaN;
+                    }
+                } else {
+                    interval = NaN;
+                }
+            } else if (Number(item.visits) < 2) {
+                interval = NaN;
+            }
+            return interval;
+        }).filter(Number.isFinite).sort((a, b) => a - b);
+        
         const frequencyAverage = frequencies.length ? frequencies.reduce((total, value) => total + value, 0) / frequencies.length : 0;
         const middle = Math.floor(frequencies.length / 2);
         const frequencyMedian = frequencies.length ? (frequencies.length % 2 ? frequencies[middle] :
@@ -216,5 +254,5 @@
     }
     return { normalize, normalizeHeader, parseMoney, parseDate, parseCsv, field, customerKey, extractPessoaId,
         visibleUser, canRunFullScan, addressOf, parseFrequencyDays, digits, normalizePhone, normalizePersonName, isActiveMogi, hasMinimumAddress,
-        averageIntervalDays, recurrence, percentileRanks, scoreCustomers, filterCustomers, hash, defaultPeriod, selectionSummary, escapeHtml, toCsv, formatZip };
+        averageIntervalDays, recurrence, percentileRanks, scoreCustomers, filterCustomers, hash, defaultPeriod, selectionSummary, escapeHtml, toCsv, formatZip, formatBrazilianDate };
 });

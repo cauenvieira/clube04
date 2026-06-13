@@ -219,13 +219,23 @@
             marker.c04Spend = customer.spend || 0;
             marker.addListener("click", () => {
                  const petsHtml = customer.pets ? `<br><span style="color: #4b5563 !important; font-size: 11px;">Doguinhos: <strong>${customer.pets}</strong></span>` : "";
-                 const phoneHtml = customer.phone ? `<br><span style="color: #4b5563 !important; font-size: 11px;">Tel: <strong>${customer.phone}</strong></span>` : "";
+                 
+                 const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, "") : "";
+                 const phoneCopySvg = customer.phone ? `<span onclick="navigator.clipboard.writeText('${cleanPhone}'); alert('Telefone copiado!');" style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #64748b; vertical-align: middle;" title="Copiar telefone"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span>` : "";
+                 const phoneHtml = customer.phone ? `<br><span style="color: #4b5563 !important; font-size: 11px; display: inline-flex; align-items: center;">Tel: <strong>${customer.phone}</strong>${phoneCopySvg}</span>` : "";
+                 
                  const neighborhoodZipHtml = `${customer.neighborhood || ""}${customer.zip ? ` - CEP: ${customer.zip}` : ""}`;
-                 const lastVisitHtml = customer.lastPurchase ? `<br><span style="color: #0f172a !important;">Última visita: <strong>${customer.lastPurchase}</strong></span>` : "";
-                 const freqHtml = customer.frequency ? `<br><span style="color: #0f172a !important;">Frequência: <strong>${customer.frequency}</strong></span>` : "";
+                 
+                 const brDate = root.C04GeoCore.formatBrazilianDate(customer.lastPurchase);
+                 const lastVisitHtml = brDate ? `<br><span style="color: #0f172a !important;">Última visita: <strong>${brDate}</strong></span>` : "";
+                 
+                 const freqVal = Number(customer.visits) === 1 ? "N/A" : customer.frequency;
+                 const freqHtml = freqVal ? `<br><span style="color: #0f172a !important;">Frequência: <strong>${freqVal}</strong></span>` : "";
+                 
+                 const nameLinkSvg = customer.idPessoa ? `<span onclick="if (typeof window.redirecionarPessoaEditar === 'function') window.redirecionarPessoaEditar('${customer.idPessoa}', '2'); else alert('Função redirecionarPessoaEditar não encontrada.');" style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #3b82f6; vertical-align: middle;" title="Ver cadastro do cliente"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></span>` : "";
                  
                  info.setContent(`<div style="color: #0f172a !important; font-family: Outfit, Inter, Arial, sans-serif; font-size: 12px; line-height: 1.5; min-width: 180px;">
-                     <b style="color: #0f172a !important; font-size: 13px; font-weight: 700;">${customer.name}</b>
+                     <b style="color: #0f172a !important; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center;">${customer.name}${nameLinkSvg}</b>
                      ${petsHtml}
                      ${phoneHtml}
                      <br><span style="color: #4b5563 !important; font-size: 11px;">${neighborhoodZipHtml}</span>
