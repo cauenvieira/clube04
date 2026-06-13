@@ -1,4 +1,7 @@
-@findstr/v "^@f" "%~f0" | powershell -NoProfile -ExecutionPolicy Bypass -Command - & pause & goto :EOF
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = (Get-Content -LiteralPath '%~f0' -Encoding UTF8 | Select-Object -Skip 4) -join [Environment]::NewLine; Invoke-Expression $c"
+pause
+goto :EOF
 # --- O código PowerShell abaixo é executado automaticamente pelo interpretador ---
 $userRepo = "cauenvieira/clube04@main"
 $currentDir = (Get-Location).Path
@@ -28,11 +31,11 @@ for ($i = 0; $i -lt $allFiles.Count; $i++) {
 }
 Write-Host ""
 Write-Host "Dica: Digite os numeros dos arquivos que quer REMOVER da limpeza (ex: 1,3) ou pressione Enter para limpar todos." -ForegroundColor Gray
-$input = Read-Host "Remover da lista"
+$selection = Read-Host "Remover da lista"
 
 $toRemove = @()
-if ($input -trim) {
-    $parts = $input.Split(',')
+if ($selection -and $selection.Trim()) {
+    $parts = $selection.Split(',')
     foreach ($part in $parts) {
         $val = 0
         if ([int]::TryParse($part.Trim(), [ref]$val)) {
