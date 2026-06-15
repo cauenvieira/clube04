@@ -3,6 +3,8 @@
     root.C04GeoConfig = {
         googleMapsApiKey: "AIzaSyCn6I3BaCjIh0yD8wZ_GAx4VkDW0uDyI7o",
         googleMapId: "4e6ccbfcdcfa97ebec8daf1e",
+        supabaseUrl: "https://jygbzzowrenfenzhcwcd.supabase.co",
+        supabaseAnonKey: "sb_publishable_zKdOe1cili0cZR2DjUGvmg_kUd_C2FJ",
         defaultMonths: 4,
         overlapDays: 7,
         logRetentionMonths: 12,

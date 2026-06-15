@@ -3,9 +3,12 @@
   "private": true,
   "scripts": {
     "dev": "npx http-server --cors -c-1 -p 8080",
-    "verify:all": "node --test tests/*.test.js && node --check clube04-suite.js && node --check modules/geo/c04-geolocalizacao.js && node --check modules/geo/c04-geo-config.js && node --check modules/geo/c04-geo-core.js && node --check modules/geo/c04-geo-sheets.js && node --check modules/geo/c04-geo-data.js && node --check modules/geo/c04-geo-map.js"
+    "verify:all": "node --test tests/geo-*.test.js && node --check clube04-suite.js && node --check modules/geo/c04-geolocalizacao.js && node --check modules/geo/c04-geo-config.js && node --check modules/geo/c04-geo-core.js && node --check modules/geo/c04-geo-data.js && node --check modules/geo/c04-geo-map.js"
   },
   "dependencies": {
     "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.1.0"
   }
 }

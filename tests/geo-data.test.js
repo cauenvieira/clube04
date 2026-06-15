@@ -23,8 +23,8 @@ function fakeCell(text, childNodes, onclick) {
 
 test("extracts only tutor from relcliente and ignores report pets", () => {
     const data = dataApi(), headers = ["Cliente", "Contato", "Opcoes"].map(text => fakeCell(text));
-    const customer = fakeCell("Amanda Fernandes do Espirto Santomaju/Itachi", [
-        { nodeType: 3, textContent: "Amanda Fernandes do Espirto Santo" },
+    const customer = fakeCell("* Amanda Fernandes do Espirto Santomaju/Itachi", [
+        { nodeType: 3, textContent: "* Amanda Fernandes do Espirto Santo" },
         { nodeType: 1, tagName: "BR", textContent: "" },
         { nodeType: 1, tagName: "B", textContent: "maju/Itachi" }
     ]);
@@ -62,7 +62,34 @@ test("excludes package products using a normalized whole word", () => {
     const data = dataApi();
     assert.equal(data.isPackageProduct("Pacote 12 Banhos"), true);
     assert.equal(data.isPackageProduct("PACOTE promocional"), true);
+    assert.equal(data.isPackageProduct("Pacotes de Banhos"), true);
+    assert.equal(data.isPackageProduct("PACOTES promocionais"), true);
     assert.equal(data.isPackageProduct("Empacotepremium"), false);
+});
+
+test("getAjaxDetails extracts URL and parameter names correctly from function source", () => {
+    const data = dataApi();
+    const mockFunc = function detalhesProdutoCliente(idPessoa) {
+        $.ajax({
+            type: "POST",
+            url: 'RelatorioCliente/RelatorioClienteM001.php',
+            async: true,
+            data: {
+                dataInicio: $('#dataInicio').val(),
+                dataFim: $('#dataFim').val(),
+                idPessoa: idPessoa
+            }, success: function (data) {
+                modal(data);
+            }
+        });
+    };
+    
+    const details = data.getAjaxDetails(mockFunc);
+    assert.ok(details);
+    assert.equal(details.url, "RelatorioCliente/RelatorioClienteM001.php");
+    assert.equal(details.isPost, true);
+    assert.equal(details.paramName, "idPessoa");
+    assert.equal(details.hasDateParams, true);
 });
 
 test("does not place customers without visits or liquid spend in period data", () => {
@@ -140,10 +167,71 @@ test("applies audited GEO address override", () => {
     assert.equal(result.persistentCustomers[0].address, "Rua Corrigida, 20, Mogi das Cruzes");
 });
 
-test("contains DataTables all-records attempt and paginated fallback", () => {
+test("contains DataTables all-records attempt and error on failure", () => {
     const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8");
     assert.match(source, /page\.len\(-1\)\.draw/);
-    assert.match(source, /page\.len\(100\)\.draw/);
-    assert.match(source, /Coleta parcial/);
-    assert.match(source, /waitForReplacement/);
+    assert.match(source, /page\.len\(9999\)\.draw/);
+    assert.match(source, /Falha ao carregar todos os registros/);
 });
+
+test("tableRecords robust fallback for tables without thead", () => {
+    const data = dataApi();
+    
+    // Simulate table with only tr th (no thead)
+    const thHeaders = ["Produto", "Valor Gasto"].map(text => fakeCell(text));
+    const cells1 = ["Shampoo", "R$ 50,00"].map(text => fakeCell(text));
+    const tableWithTh = {
+        id: "idTabelaProdutis",
+        querySelectorAll: selector => {
+            if (selector === "thead th") return [];
+            if (selector === "tr th") return thHeaders;
+            if (selector === "tbody tr") return [
+                { querySelectorAll: inner => inner === "td" ? cells1 : [], querySelector: () => fakeCell("") },
+                { querySelectorAll: inner => inner === "td" ? cells1 : [], querySelector: () => null } // Data row
+            ];
+            return [];
+        }
+    };
+    
+    const records = data.tableRecords(tableWithTh);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].Produto, "Shampoo");
+    assert.equal(records[0]["Valor Gasto"], "R$ 50,00");
+});
+
+test("falls back to unique name match when exact name and phone match fails", () => {
+    const data = dataApi();
+    const csv = [
+        { cliente: "Tamara Fiorentino batista", contato: "Celular - (11) 90000-0000", rua: "Rua T", numero: "100" },
+        { cliente: "Outro Cliente", contato: "Celular - (11) 91111-1111", rua: "Rua O", numero: "200" }
+    ];
+    const indexes = data.indexCsv(csv);
+    
+    // Exact phone mismatch, but name is unique in CSV. Should match Tamara.
+    const saleWithPhoneMismatch = { Cliente: "Tamara Fiorentino batista", Contato: "(11) 97560-5073" };
+    const matches = data.csvRowsForSale(saleWithPhoneMismatch, indexes);
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].rua, "Rua T");
+});
+
+test("c04-geo-data.js contains date-tracking, pending-accumulation, CEP cache reuse and CSV prefetch contract checks", () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-data.js"), "utf8");
+    
+    // Check that pending items receive the sale date
+    assert.match(source, /saleDate:\s*d/);
+    
+    // Check that allCreatedPendings accumulator is used and returned
+    assert.match(source, /allCreatedPendings\s*=\s*\[\s*\]/);
+    assert.match(source, /allCreatedPendings\.push\(\.\.\.newPendings\)/);
+    assert.match(source, /pending:\s*allCreatedPendings/);
+    
+    // Check that CSV caching promise is set and reused
+    assert.match(source, /_csvCachePromise/);
+    
+    // Check that CEP cache is reused for missing house numbers
+    assert.match(source, /existingGeo\s*=\s*snapshot\.geocodes\.find\(g\s*=>\s*core\.digits\(g\.zip\)\s*===\s*firstCEP\)/);
+});
+
+    
+
+

@@ -1,2 +1,6 @@
 supabase-credentials.json
 node_modules/
+scratch/
+tests/screenshots/
+task.md
+walkthrough.md

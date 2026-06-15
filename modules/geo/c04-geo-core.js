@@ -12,9 +12,10 @@
         address: ["endereco", "logradouro", "rua"], number: ["numero", "numero endereco"], complement: ["complemento"],
         neighborhood: ["bairro"], city: ["cidade", "municipio"], state: ["uf", "estado"], zip: ["cep"],
         phone: ["telefone", "telefones", "celular", "contato", "contatos"], date: ["data", "ultima visita", "ultima compra"],
-        spend: ["valor gasto", "valor", "total"], purchases: ["num compras", "numero compras", "compras"],
+        spend: ["valor gasto", "valor", "total", "subtotal", "preco", "valor total", "total geral", "valor cobrado", "total pago"], purchases: ["num compras", "numero compras", "compras"],
         ticket: ["ticket medio", "ticket"], frequency: ["freq compras", "frequencia", "frequencia compras"],
-        totalVisits: ["total de visitas", "visitas"], country: ["pais"]
+        totalVisits: ["total de visitas", "visitas"], country: ["pais"],
+        product: ["produto", "produtos", "servico", "servicos", "descricao", "itens", "item"]
     };
     function normalize(value) {
         return String(value == null ? "" : value).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -70,7 +71,7 @@
         return value;
     }
     function field(record, aliasKey) {
-        const keys = Object.keys(record || {}), aliases = ALIASES[aliasKey] || [aliasKey];
+        const keys = Object.keys(record || {}), aliases = [aliasKey, ...(ALIASES[aliasKey] || [])];
         for (const alias of aliases) {
             const wanted = normalizeHeader(alias);
             const key = keys.find((item) => normalizeHeader(item) === wanted);
@@ -85,7 +86,20 @@
     function formatBrazilianDate(value) {
         const text = String(value == null ? "" : value).trim();
         if (!text) return "";
-        const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
+        // Try parsing full ISO-8601 with timezone (e.g. from Supabase: contains T, Z, or timezone offset)
+        if (text.includes("T") || text.endsWith("Z") || (text.includes("-") && text.includes(":") && (text.includes("+") || text.slice(10).includes("-")))) {
+            const date = new Date(text);
+            if (!isNaN(date.getTime())) {
+                const day = String(date.getDate()).padStart(2, "0");
+                const month = String(date.getMonth() + 1).padStart(2, "0");
+                const year = date.getFullYear();
+                const hour = String(date.getHours()).padStart(2, "0");
+                const minute = String(date.getMinutes()).padStart(2, "0");
+                const second = String(date.getSeconds()).padStart(2, "0");
+                return `${day}/${month}/${year} ${hour}:${minute}:${second}`;
+            }
+        }
+        const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?)?/);
         if (isoMatch) {
             const [, year, month, day, hour, minute, second] = isoMatch;
             const timeStr = hour ? ` ${hour}:${minute}:${second}` : "";
@@ -106,7 +120,9 @@
     }
     function digits(value) { return String(value || "").replace(/\D/g, ""); }
     function normalizePhone(value) {
-        const text = String(value || ""), separator = text.lastIndexOf("- ");
+        const text = String(value || "").trim();
+        if (!text || text.toUpperCase() === "N/A") return "";
+        const separator = text.lastIndexOf("- ");
         return digits(separator >= 0 ? text.slice(separator + 2) : text);
     }
     function normalizePersonName(value) { return normalize(value).replace(/^[^a-z0-9]+/, "").trim(); }
@@ -125,7 +141,8 @@
         return node ? String(node.textContent || "").trim() : "";
     }
     function canRunFullScan(name) {
-        return normalize(name) === "caue";
+        const norm = normalize(name);
+        return norm.length > 0 && (norm.includes("caue") || norm === "admin");
     }
     function addressOf(record) {
         return [field(record, "address"), field(record, "number"), field(record, "complement"),
@@ -200,7 +217,11 @@
     }
     function defaultPeriod(today, months) {
         const end = new Date(today); end.setHours(12, 0, 0, 0);
-        const start = new Date(end); start.setMonth(start.getMonth() - months);
+        let start = new Date(end); start.setMonth(start.getMonth() - months);
+        const minStart = new Date("2025-02-01T12:00:00Z");
+        if (start < minStart) {
+            start = minStart;
+        }
         return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
     }
     function selectionSummary(customers, endDate) {

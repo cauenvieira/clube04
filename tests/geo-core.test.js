@@ -124,6 +124,7 @@ test("formats date strings into Brazilian format properly", () => {
     assert.equal(core.formatBrazilianDate("2026-06-13"), "13/06/2026");
     assert.equal(core.formatBrazilianDate("13/06/2026 16:40:06"), "13/06/2026 16:40:06");
     assert.equal(core.formatBrazilianDate("2026-06-03 18:42:0103/06/202618:42:01"), "03/06/2026 18:42:01");
+    assert.match(core.formatBrazilianDate("2026-06-14T02:01:06.000Z"), /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/);
     assert.equal(core.formatBrazilianDate(""), "");
     assert.equal(core.formatBrazilianDate(null), "");
 });
@@ -154,6 +155,7 @@ test("extracts idPessoa and requires it as the customer key", () => {
 test("protects full scan using the normalized visible user name", () => {
     assert.equal(core.canRunFullScan("Cau\u00ea"), true);
     assert.equal(core.canRunFullScan(" caue "), true);
+    assert.equal(core.canRunFullScan("Cau\u00ea Neves Vieira"), true);
     assert.equal(core.canRunFullScan("Outro usuario"), false);
     assert.equal(core.canRunFullScan(""), false);
 });

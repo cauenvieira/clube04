@@ -71,14 +71,85 @@
         const found = result.address_components.find(part => part.types.includes(type));
         return found ? found[shortName ? "short_name" : "long_name"] : "";
     }
+    function editDistance(s1, s2) {
+        const costs = [];
+        for (let i = 0; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= s2.length; j++) {
+                if (i === 0) {
+                    costs[j] = j;
+                } else {
+                    if (j > 0) {
+                        let newValue = costs[j - 1];
+                        if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                        }
+                        costs[j - 1] = lastValue;
+                        lastValue = newValue;
+                    }
+                }
+            }
+            if (i > 0) {
+                costs[s2.length] = lastValue;
+            }
+        }
+        return costs[s2.length];
+    }
+    function calculateSimilarity(s1, s2) {
+        let longer = s1;
+        let shorter = s2;
+        if (s1.length < s2.length) {
+            longer = s2;
+            shorter = s1;
+        }
+        const longerLength = longer.length;
+        if (longerLength === 0) return 1.0;
+        return (longerLength - editDistance(longer, shorter)) / longerLength;
+    }
     function validateGeocode(first, customer) {
         const location = first.geometry.location, config = root.C04GeoConfig;
         const distanceKm = google.maps.geometry.spherical.computeDistanceBetween(location, config.center) / 1000;
-        if (component(first, "country", true) !== "BR") return { ok: false, reason: "pais_invalido", distanceKm };
-        if (component(first, "administrative_area_level_1", true) !== "SP") return { ok: false, reason: "estado_invalido", distanceKm };
+        
+        const googleCountry = component(first, "country", true);
+        const inputCountry = root.C04GeoCore.normalize(customer && customer.country);
+        if (googleCountry !== "BR" || (inputCountry && inputCountry !== "brasil" && inputCountry !== "br")) {
+            return { ok: false, reason: "pais_divergente", distanceKm };
+        }
+        
+        const googleState = component(first, "administrative_area_level_1", true);
+        const inputState = root.C04GeoCore.normalize(customer && customer.state);
+        if (googleState !== "SP" || (inputState && inputState !== "sp" && inputState !== "sao paulo")) {
+            return { ok: false, reason: "estado_divergente", distanceKm };
+        }
+        
+        const googleCity = root.C04GeoCore.normalize(component(first, "administrative_area_level_2"));
+        const inputCity = root.C04GeoCore.normalize(customer && customer.city);
+        if (googleCity && inputCity && googleCity !== inputCity) {
+            return { ok: false, reason: "cidade_divergente", distanceKm };
+        }
+        
         if (distanceKm > config.geocodeMaxDistanceKm) return { ok: false, reason: "fora_do_raio", distanceKm };
+        
         const inputZip = root.C04GeoCore.digits(customer && customer.zip), resultZip = root.C04GeoCore.digits(component(first, "postal_code"));
-        if (first.partial_match && (!inputZip || inputZip !== resultZip)) return { ok: false, reason: "resultado_parcial", distanceKm };
+        if (first.partial_match && (!inputZip || inputZip.slice(0, 5) !== resultZip.slice(0, 5))) return { ok: false, reason: "resultado_parcial", distanceKm };
+        
+        // Comparação inteligente de ruas
+        const googleStreet = root.C04GeoCore.normalize(component(first, "route"));
+        const inputStreet = root.C04GeoCore.normalize(customer && customer.street);
+        if (googleStreet && inputStreet) {
+            const cleanStreet = (s) => s.replace(/^(rua|avenida|av|r|travessa|alameda|al|rodovia|rod|praca|pc)\.?\s+/g, "").trim();
+            const cleanGoogle = cleanStreet(googleStreet);
+            const cleanInput = cleanStreet(inputStreet);
+            if (cleanGoogle !== cleanInput) {
+                const similarity = calculateSimilarity(cleanGoogle, cleanInput);
+                if (similarity >= 0.7) {
+                    return { ok: true, warningReason: "rua_semelhante", distanceKm, quality: first.partial_match ? "postal_code_confirmed" : "exact" };
+                } else {
+                    return { ok: true, warningReason: "rua_divergente", distanceKm, quality: first.partial_match ? "postal_code_confirmed" : "exact" };
+                }
+            }
+        }
+        
         return { ok: true, distanceKm, quality: first.partial_match ? "postal_code_confirmed" : "exact" };
     }
     function failureRow(customer, reason, detail) {
@@ -131,6 +202,11 @@
                     placeId: first.place_id, lat: location.lat(), lng: location.lng(), quality: validation.quality, status: "valid",
                     geocodedAt: new Date().toISOString(), validationVersion: root.C04GeoConfig.geocodeValidationVersion, distanceKm: validation.distanceKm };
                 rows.push(row); result.push(Object.assign({}, customer, { placeId: row.placeId, lat: row.lat, lng: row.lng, neighborhood: row.neighborhood }));
+                
+                if (validation.warningReason) {
+                    rejected.push({ customer, reason: validation.warningReason, distanceKm: validation.distanceKm,
+                        formattedAddress: first.formatted_address, isWarning: true });
+                }
                 counts.found += 1;
                 await new Promise(resolve => setTimeout(resolve, 80));
             } catch (error) {
@@ -209,11 +285,12 @@
         markers.forEach(item => { item.map = null; }); markers = [];
         const info = new google.maps.InfoWindow();
         markers = jitteredItems.map(customer => {
+            const isApproximated = !customer.number || String(customer.number).trim() === "";
             const node = document.createElement("div");
             node.style.cssText = `width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${root.C04GeoConfig.colors.clientPin};border:4px solid ${color(customer.score)};color:#fff;display:grid;place-items:center;font:bold 9px Arial;box-shadow:0 2px 6px #0006`;
-            const glyph = document.createElement("span"); glyph.textContent = String(customer.score); glyph.style.transform = "rotate(45deg)";
+            const glyph = document.createElement("span"); glyph.textContent = String(customer.score) + (isApproximated ? "*" : ""); glyph.style.transform = "rotate(45deg)";
             node.textContent = ""; node.appendChild(glyph);
-            const marker = new google.maps.marker.AdvancedMarkerElement({ position: { lat: customer.lat, lng: customer.lng }, content: node, title: customer.name });
+            const marker = new google.maps.marker.AdvancedMarkerElement({ position: { lat: customer.lat, lng: customer.lng }, content: node, title: customer.name + (isApproximated ? " *" : "") });
             marker.c04Score = customer.score;
             marker.c04Visits = customer.visits || 0;
             marker.c04Spend = customer.spend || 0;
@@ -221,7 +298,7 @@
                  const petsHtml = customer.pets ? `<br><span style="color: #4b5563 !important; font-size: 11px;">Doguinhos: <strong>${customer.pets}</strong></span>` : "";
                  
                  const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, "") : "";
-                 const phoneCopySvg = customer.phone ? `<span onclick="navigator.clipboard.writeText('${cleanPhone}'); const el = this; el.style.color = '#10b981'; setTimeout(() => el.style.color = '#64748b', 1000);" style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #64748b; vertical-align: middle;" title="Copiar telefone"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span>` : "";
+                 const phoneCopySvg = customer.phone ? `<span class="c04-copy-phone-btn" data-phone="${cleanPhone}" style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #64748b; vertical-align: middle;" title="Copiar telefone"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span>` : "";
                  const phoneHtml = customer.phone ? `<br><span style="color: #4b5563 !important; font-size: 11px; display: inline-flex; align-items: center;">Tel: <strong>${customer.phone}</strong>${phoneCopySvg}</span>` : "";
                  
                  const neighborhoodZipHtml = `${customer.neighborhood || ""}${customer.zip ? ` - CEP: ${customer.zip}` : ""}`;
@@ -232,10 +309,11 @@
                  const freqVal = Number(customer.visits) === 1 ? "N/A" : customer.frequency;
                  const freqHtml = freqVal ? `<br><span style="color: #0f172a !important;">Frequência: <strong>${freqVal}</strong></span>` : "";
                  
-                 const nameLinkSvg = customer.idPessoa ? `<span onclick="if (typeof window.c04OpenPersonRegistration === 'function') { window.c04OpenPersonRegistration('${customer.idPessoa}'); } else if (typeof window.redirecionarPessoaEditar === 'function') { window.redirecionarPessoaEditar('${customer.idPessoa}', '2'); } else { alert('Função de redirecionamento não encontrada.'); }" style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #3b82f6; vertical-align: middle;" title="Ver cadastro do cliente"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></span>` : "";
+                 const nameLinkSvg = customer.idPessoa ? `<span style="cursor: pointer; margin-left: 6px; display: inline-flex; align-items: center; color: #3b82f6; vertical-align: middle;" title="Ver cadastro do cliente"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></span>` : "";
+                 const nameHtml = customer.idPessoa ? `<b class="c04-open-person-btn" data-person="${customer.idPessoa}" style="color: #3b82f6 !important; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; cursor: pointer;" title="Ver cadastro do cliente">${customer.name}${isApproximated ? " *" : ""}${nameLinkSvg}</b>` : `<b style="color: #0f172a !important; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center;">${customer.name}${isApproximated ? " *" : ""}</b>`;
                  
                  info.setContent(`<div style="color: #0f172a !important; font-family: Outfit, Inter, Arial, sans-serif; font-size: 12px; line-height: 1.5; min-width: 180px;">
-                     <b style="color: #0f172a !important; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center;">${customer.name}${nameLinkSvg}</b>
+                     ${nameHtml}
                      ${petsHtml}
                      ${phoneHtml}
                      <br><span style="color: #4b5563 !important; font-size: 11px;">${neighborhoodZipHtml}</span>
@@ -247,7 +325,34 @@
                      <span style="color: #0f172a !important;">Ticket de consumo: <strong>R$ ${customer.ticket.toFixed(2)}</strong></span><br>
                      <span style="color: #0f172a !important;">Receita consumida: <strong>R$ ${customer.spend.toFixed(2)}</strong></span>
                  </div>`);
-                info.open(map, marker);
+                 
+                 google.maps.event.addListenerOnce(info, "domready", () => {
+                     // Bind copy phone button
+                     const copyBtn = document.querySelector(".c04-copy-phone-btn");
+                     if (copyBtn) {
+                         copyBtn.onclick = () => {
+                             navigator.clipboard.writeText(copyBtn.dataset.phone);
+                             copyBtn.style.color = '#10b981';
+                             setTimeout(() => { copyBtn.style.color = '#64748b'; }, 1000);
+                         };
+                     }
+                     // Bind open person button
+                     const openBtn = document.querySelector(".c04-open-person-btn");
+                     if (openBtn) {
+                         openBtn.onclick = () => {
+                             const idPessoa = openBtn.dataset.person;
+                             if (typeof root.c04OpenPersonRegistration === 'function') {
+                                 root.c04OpenPersonRegistration(idPessoa);
+                             } else if (typeof window.redirecionarPessoaEditar === 'function') {
+                                 window.redirecionarPessoaEditar(idPessoa, '2');
+                             } else {
+                                 alert('Função de redirecionamento não encontrada.');
+                             }
+                         };
+                     }
+                 });
+                 
+                 info.open(map, marker);
             }); return marker;
         });
         createClusterer(visible, clusterEnabled);
@@ -352,11 +457,8 @@
         const button = document.createElement("button");
         button.type = "button"; button.title = "Centralizar no Clube04"; button.setAttribute("aria-label", "Centralizar no Clube04");
         button.innerHTML = `
-            <div id="c04-recenter-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; position: relative; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); padding-bottom: 8px;">
-                <div id="c04-recenter-icon-wrapper" style="flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 4px;">
-                    ${SVG_RECENTER}
-                </div>
-                <div id="c04-recenter-label" style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(15,23,42,0.9); color: #fff; font-size: 8px; font-weight: 600; text-align: center; padding: 2px 0; font-family: Outfit, sans-serif; text-transform: uppercase;">Foco</div>
+            <div id="c04-recenter-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a);">
+                ${SVG_RECENTER}
             </div>
         `;
         button.style.cssText = "background:none;border:0;padding:0;margin:10px;cursor:pointer;transition:transform 0.15s;";
@@ -371,15 +473,13 @@
         const checkbox = document.getElementById("c04-satellite");
         satelliteMode = checkbox ? checkbox.checked : false;
         const button = document.createElement("button");
-        button.type = "button"; button.title = "Alternar Satélite"; button.setAttribute("aria-label", "Alternar Satélite");
+        button.type = "button"; button.title = satelliteMode ? "Mapa" : "Satélite"; button.setAttribute("aria-label", satelliteMode ? "Mapa" : "Satélite");
         const iconHtml = satelliteMode ? SVG_MAP : SVG_SATELLITE;
-        const labelText = satelliteMode ? "Mapa" : "Satélite";
         button.innerHTML = `
-            <div id="c04-satellite-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; position: relative; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); padding-bottom: 8px;">
-                <div id="c04-satellite-icon-wrapper" style="flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 4px;">
+            <div id="c04-satellite-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a);">
+                <div id="c04-satellite-icon-wrapper" style="display: flex; align-items: center; justify-content: center;">
                     ${iconHtml}
                 </div>
-                <div id="c04-satellite-label" style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(15,23,42,0.9); color: #fff; font-size: 8px; font-weight: 600; text-align: center; padding: 2px 0; font-family: Outfit, sans-serif; text-transform: uppercase;">${labelText}</div>
             </div>
         `;
         button.style.cssText = "background:none;border:0;padding:0;margin:10px;cursor:pointer;transition:transform 0.15s;";
@@ -393,29 +493,30 @@
                 checkbox.dispatchEvent(new Event("change"));
             }
             const wrapper = button.querySelector("#c04-satellite-icon-wrapper");
-            const label = button.querySelector("#c04-satellite-label");
             if (satelliteMode) {
                 wrapper.innerHTML = SVG_MAP;
-                label.textContent = "Mapa";
+                button.title = "Mapa";
+                button.setAttribute("aria-label", "Mapa");
             } else {
                 wrapper.innerHTML = SVG_SATELLITE;
-                label.textContent = "Satélite";
+                button.title = "Satélite";
+                button.setAttribute("aria-label", "Satélite");
             }
         };
         map.controls[google.maps.ControlPosition.RIGHT_TOP].push(button);
     }
     function addFullscreenControl() {
         const button = document.createElement("button");
-        button.type = "button"; button.title = "Alternar Tela Cheia"; button.setAttribute("aria-label", "Alternar Tela Cheia");
+        button.type = "button";
         const isFullscreen = !!document.fullscreenElement;
+        button.title = isFullscreen ? "Sair" : "Tela Cheia";
+        button.setAttribute("aria-label", isFullscreen ? "Sair" : "Tela Cheia");
         const iconHtml = isFullscreen ? SVG_EXIT_FULLSCREEN : SVG_FULLSCREEN;
-        const labelText = isFullscreen ? "Sair" : "Tela Cheia";
         button.innerHTML = `
-            <div id="c04-fullscreen-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; position: relative; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a); padding-bottom: 8px;">
-                <div id="c04-fullscreen-icon-wrapper" style="flex: 1; display: flex; align-items: center; justify-content: center; margin-top: 4px;">
+            <div id="c04-fullscreen-container" style="width: 40px; height: 40px; border-radius: 8px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b, #0f172a);">
+                <div id="c04-fullscreen-icon-wrapper" style="display: flex; align-items: center; justify-content: center;">
                     ${iconHtml}
                 </div>
-                <div id="c04-fullscreen-label" style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(15,23,42,0.9); color: #fff; font-size: 8px; font-weight: 600; text-align: center; padding: 2px 0; font-family: Outfit, sans-serif; text-transform: uppercase;">${labelText}</div>
             </div>
         `;
         button.style.cssText = "background:none;border:0;padding:0;margin:10px;cursor:pointer;transition:transform 0.15s;";
@@ -428,10 +529,10 @@
         window.addEventListener("c04_fullscreen_changed", (e) => {
             const active = e.detail.isFullscreen;
             const wrapper = button.querySelector("#c04-fullscreen-icon-wrapper");
-            const label = button.querySelector("#c04-fullscreen-label");
-            if (wrapper && label) {
+            if (wrapper) {
                 wrapper.innerHTML = active ? SVG_EXIT_FULLSCREEN : SVG_FULLSCREEN;
-                label.textContent = active ? "Sair" : "Tela Cheia";
+                button.title = active ? "Sair" : "Tela Cheia";
+                button.setAttribute("aria-label", active ? "Sair" : "Tela Cheia");
             }
         });
         map.controls[google.maps.ControlPosition.RIGHT_TOP].push(button);

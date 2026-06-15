@@ -1,8 +1,16 @@
 (function (root) {
     "use strict";
-    const MODULES = ["c04-geo-config.js", "c04-geo-core.js", "c04-geo-sheets.js", "c04-geo-data.js", "c04-geo-map.js"];
+    const MODULES = ["c04-geo-config.js", "c04-geo-core.js", "c04-geo-supabase.js", "c04-geo-data.js", "c04-geo-map.js"];
     let customers = [], visibleCustomers = [], pending = [], selected = [], running = false, lastProgress = {}, runToken = null;
-    let keydownHandler, fullscreenHandler;
+    let currentPendings = [], currentSnapshot = null, pendingFilters = {
+        data: { regex: "", selected: new Set() },
+        gravidade: { regex: "", selected: new Set() },
+        pin: { regex: "", selected: new Set() },
+        fonte: { regex: "", selected: new Set() },
+        motivo: { regex: "", selected: new Set() },
+        cliente: { regex: "", selected: new Set() }
+    }, pendingSort = { col: "default", dir: "desc" };
+    let keydownHandler, fullscreenHandler, closeDropdownOnOutsideClick;
     const esc = value => root.C04GeoCore.escapeHtml(value);
     function visibleUser() { return root.C04GeoCore.visibleUser(document); }
     function migrateLegacySettings(settings) {
@@ -122,7 +130,7 @@
         .c04-modal { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 2000; display: none; place-items: center; }
         .c04-modal.open { display: grid; }
         .c04-modal-card { background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 24px; width: min(760px, 90%); max-height: 85%; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); color: #f8fafc; }
-        #c04-pending-modal .c04-modal-card { width: min(1100px, 95%); }
+        #c04-settings-modal .c04-modal-card { width: min(1300px, 95%); padding-bottom: 60px; }
         .c04-pending-row:not(.c04-expanded) .c04-pending-collapsible {
             white-space: nowrap;
             overflow: hidden;
@@ -208,13 +216,33 @@
         if (bar) {
             bar.style.width = `${p.percent || 0}%`;
             text.textContent = p.stage || "";
+            if (p.stage && p.stage.startsWith("Erro")) {
+                text.style.cursor = "pointer";
+                text.style.textDecoration = "underline";
+                text.onclick = showLogs;
+            } else {
+                text.style.cursor = "default";
+                text.style.textDecoration = "none";
+                text.onclick = null;
+            }
             counters.textContent = `Coletados ${p.collected || 0} | Existentes ${p.existing || 0} | Novos ${p.new || 0} | Alterados ${p.changed || 0} | Pendencias ${p.pending || 0} | Coord. ${p.found || 0}/${p.failed || 0} | Enviados ${p.sent || 0}`;
         }
         const headerBar = document.getElementById("c04-header-progress-bar");
         const headerText = document.getElementById("c04-header-progress-text");
         const headerCounters = document.getElementById("c04-header-progress-counters");
         if (headerBar) headerBar.style.width = `${p.percent || 0}%`;
-        if (headerText) headerText.textContent = p.stage || "";
+        if (headerText) {
+            headerText.textContent = p.stage || "";
+            if (p.stage && p.stage.startsWith("Erro")) {
+                headerText.style.cursor = "pointer";
+                headerText.style.textDecoration = "underline";
+                headerText.onclick = showLogs;
+            } else {
+                headerText.style.cursor = "default";
+                headerText.style.textDecoration = "none";
+                headerText.onclick = null;
+            }
+        }
         if (headerCounters) {
             headerCounters.textContent = `Col: ${p.collected || 0} | Ext: ${p.existing || 0} | Nov: ${p.new || 0} | Alt: ${p.changed || 0} | Pend: ${p.pending || 0} | Cor: ${p.found || 0}/${p.failed || 0} | Env: ${p.sent || 0}`;
         }
@@ -224,9 +252,12 @@
     }
     function configFromForm() {
         const number = id => Number(document.getElementById(id).value);
+        const retentionInput = document.getElementById("c04-log-retention-input");
+        const logRetentionMonths = retentionInput ? Number(retentionInput.value) : 12;
         return { franchiseAverageTicket: number("c04-ticket"), weights: { recurrence: number("c04-w-rec"), ticket: number("c04-w-ticket") },
             recurrenceLimits: { excellent: number("c04-r-ex"), good: number("c04-r-good"), low: number("c04-r-low"), bad: number("c04-r-bad") },
             clusterRadius: number("c04-cluster"), heatmaps: { opacity: number("c04-opacity"), radius: number("c04-radius"), intensity: number("c04-intensity") },
+            logRetentionMonths,
             colors: { clientPin: document.getElementById("c04-color-client").value, storePin: document.getElementById("c04-color-store").value,
                 cluster: document.getElementById("c04-color-cluster").value, scoreLow: document.getElementById("c04-color-low").value,
                 scoreMedium: document.getElementById("c04-color-medium").value, scoreGood: document.getElementById("c04-color-good").value,
@@ -332,20 +363,6 @@
         const pBtn = document.getElementById("c04-summary-open-pendings");
         if (pBtn) pBtn.onclick = showPendings;
     }
-    async function sendBatches(result, geocodes, token) {
-        const size = root.C04GeoConfig.batchSize, logs = pending.map(item => ({ runId: result.runId, timestamp: new Date().toISOString(),
-            source: item.source, idPessoa: item.idPessoa, reason: item.reason, message: item.message }));
-        const total = Math.max(result.persistentCustomers.length, result.pets.length, geocodes.length, logs.length, pending.length), sent = { count: 0 };
-        for (let index = 0; index < total; index += size) {
-            if (token.cancelled) throw new Error("Sincronizacao cancelada.");
-            const payload = { customers: result.persistentCustomers.slice(index, index + size), pets: result.pets.slice(index, index + size),
-                geocodes: geocodes.slice(index, index + size), logs: logs.slice(index, index + size),
-                pendings: pending.slice(index, index + size) };
-            await root.C04GeoSheets.stageBatch(Object.assign({ runId: result.runId }, payload));
-            sent.count += Object.values(payload).reduce((sum, rows) => sum + rows.length, 0);
-            progress({ stage: "Enviando para Google Sheets", percent: 75 + Math.round(20 * Math.min(1, (index + size) / total)), sent: sent.count });
-        }
-    }
     async function run(force) {
         if (running) { runToken.cancelled = true; if (runToken.onCancel) runToken.onCancel(); progress({ stage: "Cancelando...", percent: lastProgress.percent || 0 }); return; }
         running = true; runToken = { cancelled: false, onCancel: null }; lastProgress = {}; const syncButton = document.getElementById("c04-sync");
@@ -353,95 +370,30 @@
         let result;
         try {
             const period = { start: document.getElementById("c04-start").value, end: document.getElementById("c04-end").value };
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            if (period.start > todayStr || period.end > todayStr) {
+                throw new Error("Não é permitido selecionar datas futuras.");
+            }
+            if (period.start < "2025-02-01" || period.end < "2025-02-01") {
+                throw new Error("A data mínima permitida é 01/02/2025.");
+            }
             result = await root.C04GeoData.sync(period, force, progress, runToken); pending = result.pending;
             customers = root.C04GeoCore.scoreCustomers(result.periodCustomers, root.C04GeoConfig.weights, root.C04GeoConfig.franchiseAverageTicket, root.C04GeoConfig.recurrenceLimits);
-            progress({ stage: "Geocodificando", percent: 45 });
-            const estimate = customers.filter(item => {
-                const previous = result.snapshot.geocodes.find(row => String(row.idPessoa) === String(item.idPessoa));
-                return !previous || previous.addressHash !== item.addressHash || (force && previous.status === "failed") || item.retryGeocode;
-            }).length;
-            if (estimate > root.C04GeoConfig.geocodeConfirmationThreshold &&
-                !root.confirm(`Esta execucao pode realizar ate ${estimate} consultas de geocodificacao. Continuar?`))
-                throw new Error("Geocodificacao nao autorizada.");
             
-            let lastRender = 0;
-            const geo = await root.C04GeoMap.geocode(customers, result.snapshot.geocodes, (done, total, counts, partial) => {
-                progress(Object.assign({ stage: "Geocodificando", percent: 45 + Math.round(28 * done / total) }, counts));
-                // Throttle map rendering to prevent freezing browser during cache reuse
-                const now = Date.now();
-                if (done === total || (done % 100 === 0 && now - lastRender > 1500)) {
-                    root.C04GeoMap.renderPins(partial, layerState().pins, layerState().cluster);
-                    root.C04GeoMap.setLayers(layerState());
-                    lastRender = now;
-                }
-            }, runToken, { forceFailed: force });
+            progress({ stage: "Renderizando mapa", percent: 80 });
+            root.C04GeoMap.renderPins(customers, layerState().pins, layerState().cluster);
+            root.C04GeoMap.setLayers(layerState());
             
-            geo.rejected.forEach(item => {
-                let msg = `Resultado rejeitado (${item.distanceKm.toFixed(1)} km).`;
-                const inputAddr = `${item.customer.street || ""}, ${item.customer.number || ""}, ${item.customer.neighborhood || ""}, ${item.customer.city || ""} - ${item.customer.zip || ""}`;
-                const foundAddr = item.formattedAddress || "não encontrado";
-                
-                if (item.reason === "fora_do_raio") {
-                    msg += ` O endereço localizado pelo Google fica muito longe da unidade (${item.distanceKm.toFixed(1)} km), superando o limite de ${root.C04GeoConfig.geocodeMaxDistanceKm} km.\n` +
-                           `• Cadastrado: "${inputAddr}"\n` +
-                           `• Encontrado: "${foundAddr}"\n` +
-                           `• O que fazer: Verifique se a cidade ou estado no cadastro do cliente estão corretos.`;
-                } else if (item.reason === "resultado_parcial") {
-                    msg += ` O Google encontrou apenas uma aproximação (número não exato ou CEP divergente).\n` +
-                           `• Cadastrado: "${inputAddr}"\n` +
-                           `• Encontrado: "${foundAddr}"\n` +
-                           `• O que fazer: Verifique se o número do imóvel está correto e se o CEP corresponde exatamente a essa rua.`;
-                } else if (item.reason === "estado_invalido") {
-                    msg += ` O endereço está fora do estado de São Paulo (SP).\n` +
-                           `• Cadastrado: "${inputAddr}"\n` +
-                           `• Encontrado: "${foundAddr}"\n` +
-                           `• O que fazer: Corrija o estado/cidade no cadastro do cliente.`;
-                } else if (item.reason === "pais_invalido") {
-                    msg += ` O endereço está fora do Brasil.\n` +
-                           `• Cadastrado: "${inputAddr}"\n` +
-                           `• Encontrado: "${foundAddr}"\n` +
-                           `• O que fazer: Verifique se o país ou o endereço está correto no cadastro.`;
-                } else {
-                    msg += ` Erro de geocodificação.\n` +
-                           `• Cadastrado: "${inputAddr}"\n` +
-                           `• Encontrado: "${foundAddr}"`;
-                }
-                
-                pending.push({ pendingId: root.C04GeoCore.hash(`Pendencia|${item.customer.idPessoa || item.customer.name}`),
-                    source: "Geocodificacao", reason: item.reason, message: msg,
-                    idPessoa: item.customer.idPessoa, customerName: item.customer.name, status: "open", record: item,
-                    createdAt: new Date().toISOString() });
-            });
+            render();
             
-            // Deduplicar pendências mantendo no máximo uma por cliente (com prioridade para Clientes)
-            const uniquePending = [];
-            const seenPending = new Set();
-            pending.sort((a, b) => {
-                if (a.source === "Clientes" && b.source !== "Clientes") return -1;
-                if (a.source !== "Clientes" && b.source === "Clientes") return 1;
-                return 0;
-            });
-            pending.forEach(item => {
-                const key = String(item.idPessoa || item.customerName || "");
-                if (key && !seenPending.has(key)) {
-                    seenPending.add(key);
-                    uniquePending.push(item);
-                } else if (!key) {
-                    uniquePending.push(item);
-                }
-            });
-            pending = uniquePending;
+            progress({ stage: "Finalizando execução", percent: 95 });
             
-            customers = geo.customers; render();
-            await sendBatches(result, geo.rows, runToken);
-            if (runToken.cancelled) throw new Error("Sincronizacao cancelada.");
-            const published = await root.C04GeoSheets.publishRun({ runId: result.runId, sourceTotals: result.sourceTotals,
-                emptyPeriod: result.sourceTotals.pertinent === 0 });
-            await root.C04GeoSheets.finishRun({ runId: result.runId, status: "success", result: published.result,
+            await root.C04GeoSheets.finishRun({ runId: result.runId, status: "success",
                 pertinent: result.sourceTotals.pertinent, accepted: result.counts.accepted, rejected: result.counts.rejected,
-                mapped: customers.length, pending: pending.length, counters: lastProgress });
+                mapped: customers.length, pending: pending.length, counters: result.telemetry });
             await root.C04GeoSheets.consumeRetries().catch(() => {});
-            root.C04GeoSheets.cleanup().catch(() => {}); progress({ stage: "Concluido", percent: 100 });
+            root.C04GeoSheets.cleanup({ visibleUser: visibleUser() }).catch(() => {}); progress({ stage: "Concluido", percent: 100 });
         } catch (error) {
             if (result && result.runId) {
                 await root.C04GeoSheets.discardRun({ runId: result.runId }).catch(() => {});
@@ -485,54 +437,166 @@
             `<tr><td>${esc(item.name)}</td><td>${esc(item.neighborhood || "")}</td><td>${item.visits}</td><td>${item.ticket.toFixed(2)}</td><td>${item.spend.toFixed(2)}</td><td>${item.score}</td></tr>`).join("");
         document.getElementById("c04-list-modal").classList.add("open");
     }
+    function formatDuration(startedAt, finishedAt) {
+        if (!startedAt || !finishedAt) return "-";
+        const start = new Date(startedAt);
+        const end = new Date(finishedAt);
+        const diff = end - start;
+        if (Number.isNaN(diff) || diff < 0) return "-";
+        return `${(diff / 1000).toFixed(1)}s`;
+    }
     async function showLogs() {
-        const data = await root.C04GeoSheets.logs({}); document.getElementById("c04-log-body").innerHTML = (data.executions || []).slice().reverse().map(item =>
-            `<tr><td>${esc(item.startedAt || "")}</td><td>${esc(item.type || "")}</td><td>${esc(item.status || "")}</td><td>${esc(item.periodStart || "")} a ${esc(item.periodEnd || "")}</td></tr>`).join("");
-        document.getElementById("c04-log-detail-body").innerHTML = (data.details || []).slice().reverse().map(item =>
-            `<tr><td>${esc(item.timestamp || "")}</td><td>${esc(item.source || "")}</td><td>${esc(item.reason || "")}</td><td>${esc(item.message || "")}</td></tr>`).join("");
-        document.getElementById("c04-log-modal").classList.add("open");
+        const data = await root.C04GeoSheets.logs({});
+        document.getElementById("c04-log-body").innerHTML = (data.executions || []).slice().reverse().map(item => {
+            const startStr = item.startedAt ? root.C04GeoCore.formatBrazilianDate(item.startedAt) : "-";
+            const hasTelemetry = item.telemetry && Object.keys(item.telemetry).length > 0;
+            const errorMsg = item.error ? esc(item.error) : "-";
+            
+            let actionsHtml = "";
+            if (hasTelemetry) {
+                actionsHtml += `<button class="c04-btn alt c04-view-telemetry" data-id="${esc(item.runId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; margin-right: 4px;">Telemetria</button>`;
+            }
+            if (item.error) {
+                actionsHtml += `<button class="c04-btn danger c04-view-error-tech" data-id="${esc(item.runId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px;">Ver Erro</button>`;
+            }
+            if (!actionsHtml) actionsHtml = "-";
+            
+            return `<tr>
+                <td>${esc(startStr)}</td>
+                <td>${esc(item.type || "")}</td>
+                <td><span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05);">${esc(item.status || "")}</span></td>
+                <td>${esc(item.visibleUser || "")}</td>
+                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${esc(item.error || "")}">${errorMsg}</td>
+                <td style="text-align: right; white-space: nowrap;">
+                    ${actionsHtml}
+                </td>
+            </tr>`;
+        }).join("");
+
+        const telemetryButtons = document.getElementById("c04-log-body").querySelectorAll(".c04-view-telemetry");
+        telemetryButtons.forEach(btn => {
+            btn.onclick = () => {
+                const runId = btn.dataset.id;
+                const run = (data.executions || []).find(r => r.runId === runId);
+                if (!run || !run.telemetry) return;
+                
+                const t = run.telemetry;
+                let html = `📊 RELATÓRIO DE TELEMETRIA DA EXECUÇÃO\n`;
+                html += `==========================================\n`;
+                html += `Run ID: ${run.runId}\n`;
+                html += `Tipo: ${run.type}\n`;
+                html += `Status: ${run.status}\n`;
+                html += `Período: ${run.periodStart} a ${run.periodEnd}\n`;
+                html += `Duração Total: ${formatDuration(run.startedAt, run.finishedAt)}\n\n`;
+                
+                html += `Breakdown por etapa:\n`;
+                html += `------------------------------------------\n`;
+                html += `1. Snapshot Supabase:      ${((t.sheetsSnapshotMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `2. Busca relcliente.php:   ${((t.salesFetchMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `3. Detalhes de Produtos:   ${((t.productDetailsFetchMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `4. Download CSV Clientes:  ${((t.csvFetchMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `5. Consolidação e Cruzamento: ${((t.processingMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `6. Geocodificação (Google): ${((t.geocodingMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `7. Gravação e Publicação:  ${((t.sheetsPublishMs || 0) / 1000).toFixed(3)}s\n`;
+                html += `==========================================\n`;
+                
+                document.getElementById("c04-telemetry-content").textContent = html;
+                document.getElementById("c04-telemetry-modal").classList.add("open");
+            };
+        });
+
+        const errorButtons = document.getElementById("c04-log-body").querySelectorAll(".c04-view-error-tech");
+        errorButtons.forEach(btn => {
+            btn.onclick = () => {
+                const runId = btn.dataset.id;
+                const run = (data.executions || []).find(r => r.runId === runId);
+                if (!run || !run.error) return;
+                
+                let html = `❌ DETALHES TÉCNICOS DO ERRO DA EXECUÇÃO\n`;
+                html += `==========================================\n`;
+                html += `Run ID: ${run.runId}\n`;
+                html += `Tipo: ${run.type}\n`;
+                html += `Status: ${run.status}\n`;
+                html += `Período: ${run.periodStart} a ${run.periodEnd}\n`;
+                html += `Duração Total: ${formatDuration(run.startedAt, run.finishedAt)}\n\n`;
+                
+                html += `Erro Reportado:\n`;
+                html += `------------------------------------------\n`;
+                html += `${run.error}\n`;
+                html += `==========================================\n`;
+                
+                document.getElementById("c04-tech-content").textContent = html;
+                document.getElementById("c04-tech-modal").classList.add("open");
+            };
+        });
+        const modalEl = document.getElementById("c04-settings-modal");
+        if (modalEl) modalEl.classList.add("open");
+        document.querySelectorAll(".c04-tab,.c04-tab-panel").forEach(item => item.classList.remove("active"));
+        const tabBtn = document.querySelector(`.c04-tab[data-tab="c04-tab-logs"]`);
+        if (tabBtn) tabBtn.classList.add("active");
+        const panel = document.getElementById("c04-tab-logs");
+        if (panel) panel.classList.add("active");
     }
     const PENDING_MAP = {
         identificador_invalido: {
             motivo: "Identificador Inválido",
             solucao: "O cliente possui vendas registradas mas está sem o ID único (idPessoa). Verifique e corrija no sistema.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         cliente_inativo: {
             motivo: "Cadastro Inativo",
             solucao: "O cliente está marcado como Inativo no arquivo CSV de clientes. Reative o cadastro se necessário.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         nome_duplicado: {
             motivo: "Duplicidade de Nome",
             solucao: "Existem múltiplos cadastros com o mesmo nome e sem telefone. Adicione um telefone celular para diferenciá-los.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         cliente_nao_encontrado: {
             motivo: "Cadastro Não Encontrado",
             solucao: "A venda refere-se a um cliente não localizado no CSV exportado. Verifique se o nome/telefone no sistema estão corretos.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         endereco_ausente: {
             motivo: "Endereço Ausente",
             solucao: "O CEP ou logradouro está em branco no cadastro do cliente. Preencha os dados de endereço no sistema.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         fora_do_raio: {
             motivo: "Fora do Raio Limite",
             solucao: "O endereço retornado pelo Google fica muito longe da unidade. Verifique se a cidade ou estado do cadastro estão corretos.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         resultado_parcial: {
             motivo: "CEP ou Número Divergente",
             solucao: "O Google Maps encontrou apenas uma aproximação (número inexistente ou CEP incorreto). Corrija no cadastro.",
+            gravidade: "Aviso",
+            ping: "Sim"
         },
         estado_invalido: {
             motivo: "Estado Inválido",
             solucao: "O endereço geocodificado fica fora do estado cadastrado (São Paulo - SP). Corrija o estado no sistema.",
+            gravidade: "Crítico",
+            ping: "Não"
         },
         pais_invalido: {
             motivo: "País Inválido",
             solucao: "O endereço geocodificado fica fora do Brasil. Corrija o país ou endereço no sistema.",
+            gravidade: "Crítico",
+            ping: "Não"
         }
     };
 
     function getTechnicalDetails(item) {
         const r = item.record || {};
+        const core = root.C04GeoCore;
         const inputAddr = r.customer ? `${r.customer.street || ""}, ${r.customer.number || ""}, ${r.customer.neighborhood || ""}, ${r.customer.city || ""} - ${r.customer.zip || ""}` : "";
         const foundAddr = r.formattedAddress || "não encontrado";
         const distance = typeof r.distanceKm === "number" ? `${r.distanceKm.toFixed(2)} km` : "N/A";
@@ -544,6 +608,64 @@
         tech += `ID do Cliente (idPessoa): ${item.idPessoa || "N/A"}\n`;
         tech += `Nome do Cliente: ${item.customerName || "N/A"}\n\n`;
         
+        // 1. --- DADOS COLETADOS DO CRM (relcliente.php) ---
+        tech += `--- DADOS COLETADOS DO CRM (relcliente.php) ---\n`;
+        if (item.source === "Geocodificacao") {
+            const cust = r.customer || {};
+            tech += `ID do Cliente: ${item.idPessoa || "N/A"}\n`;
+            tech += `Nome no CRM: "${r.customerName || r.Cliente || item.customerName || cust.name || "N/A"}"\n`;
+            tech += `Telefone no CRM: "${core.normalizePhone(r.phone || r.Contato || cust.phone) || "N/A"}"\n`;
+            const addr = [cust.street, cust.number, cust.complement, cust.neighborhood, cust.city, cust.state, cust.zip]
+                .map(v => String(v || "").trim()).filter(Boolean).join(", ");
+            tech += `Endereço no CRM: "${addr || "N/A"}"\n\n`;
+        } else {
+            const saleDateStr = r.saleDate ? core.formatBrazilianDate(r.saleDate) : (core.field(r, "date") || "N/A");
+            const cleanDate = saleDateStr.split(" ")[0];
+            tech += `dia analisado: ${cleanDate || "N/A"}\n`;
+            tech += `ID do Cliente: ${item.idPessoa || "N/A"}\n`;
+            tech += `Nome no CRM: "${r.Cliente || r.customerName || r.customer || item.customerName || "N/A"}"\n`;
+            tech += `Telefone no CRM: "${core.normalizePhone(r.Contato || r.phone) || "N/A"}"\n`;
+            tech += `Número de Compras: ${core.field(r, "purchases") || r.visits || "N/A"}\n`;
+            tech += `Valor Consumido: ${core.field(r, "spend") || r.spend || "N/A"}\n\n`;
+        }
+
+        // 2. --- DADOS ENCONTRADOS NA PLANILHA (cliente.csv) ---
+        tech += `--- DADOS ENCONTRADOS NA PLANILHA (cliente.csv) ---\n`;
+        tech += `Arquivo cliente.csv carregado com sucesso.\n`;
+        
+        const cust = r.customer || {};
+        if (cust.name || cust.idPessoa) {
+            const petStr = cust.pets || cust.doguinhos || "N/A";
+            const doc = cust.document || "N/A";
+            const zip = cust.zip || "N/A";
+            const num = cust.number || "N/A";
+            const street = cust.street || "N/A";
+            tech += `Correspondência ativa no Banco GEO:\n`;
+            tech += `Nome: ${cust.name || "N/A"} | Tel: ${cust.phone || "N/A"} | Doc: ${doc} | CEP: ${zip} | Num: ${num} | Rua: ${street} | Pets: ${petStr}\n\n`;
+        } else if (item.source === "Geocodificacao") {
+            tech += `Correspondência ativa no Banco GEO: Não encontrada.\n\n`;
+        }
+        
+        if (item.source !== "Geocodificacao") {
+            if (r.csvMatches && r.csvMatches.length > 0) {
+                tech += `Correspondências encontradas no CSV (${r.csvMatches.length} linha(s)):\n`;
+                r.csvMatches.forEach((match, index) => {
+                    const name = match.customer || match.Nome || match.nome || "N/A";
+                    const phone = match.phone || match.Telefones || match.telefones || "N/A";
+                    const doc = match.document || match.CPF || match.cpf || "N/A";
+                    const zip = match.zip || match.CEP || match.cep || "N/A";
+                    const num = match.number || match.Número || match.numero || "N/A";
+                    const street = match.address || match.Rua || match.rua || "N/A";
+                    const pet = match.pet || match.Animal || match.animal || "N/A";
+                    tech += `Linha ${index + 1}: Nome: ${name} | Tel: ${phone} | Doc: ${doc} | CEP: ${zip} | Num: ${num} | Rua: ${street} | Pet: ${pet}\n`;
+                });
+                tech += `\n`;
+            } else {
+                tech += `Correspondência: Não encontrada no cliente.csv para Nome + Telefone correspondente.\n\n`;
+            }
+        }
+
+        // 3. --- ANÁLISE DE CRUZAMENTO DE DADOS ---
         if (item.source === "Geocodificacao") {
             tech += `--- ANÁLISE DA GEOCODIFICAÇÃO ---\n`;
             tech += `Endereço no Cadastro: "${inputAddr}"\n`;
@@ -554,7 +676,14 @@
                       item.reason === "resultado_parcial" ? "Correspondência Parcial da API do Google ou CEP divergente" :
                       item.reason === "estado_invalido" ? "Localizado fora do Estado (SP)" :
                       item.reason === "pais_invalido" ? "Localizado fora do País (Brasil)" : "Inconsistência genérica de endereço"}\n\n`;
-            tech += `--- REGRA APLICADA ---\n`;
+        } else {
+            tech += `--- ANÁLISE DE CRUZAMENTO DE DADOS ---\n`;
+            tech += `Mensagem de Erro: "${item.message}"\n\n`;
+        }
+
+        // 4. --- REGRA APLICADA ---
+        tech += `--- REGRA APLICADA ---\n`;
+        if (item.source === "Geocodificacao") {
             if (item.reason === "fora_do_raio") {
                 tech += `Regra: A distância entre a coordenada retornada (${distance}) e o centro configurado supera o raio limite de ${root.C04GeoConfig.geocodeMaxDistanceKm} km. O marcador é bloqueado no mapa para evitar distorções de escala.`;
             } else if (item.reason === "resultado_parcial") {
@@ -565,9 +694,6 @@
                 tech += `Regra: O país retornado não é "Brasil". O sistema aceita apenas endereços nacionais.`;
             }
         } else {
-            tech += `--- ANÁLISE DE CRUZAMENTO DE DADOS ---\n`;
-            tech += `Mensagem de Erro: "${item.message}"\n\n`;
-            tech += `--- REGRA APLICADA ---\n`;
             if (item.reason === "identificador_invalido") {
                 tech += `Regra: O registro de venda importado de relcliente.php não possui um valor para 'idPessoa'. Não é possível associar a compra a nenhuma pessoa no banco de dados.`;
             } else if (item.reason === "cliente_inativo") {
@@ -576,83 +702,503 @@
                 tech += `Regra: A venda do cliente não possui telefone e existem múltiplos registros de clientes com o mesmo nome na base do CSV. Como não há chave de telefone ou CPF para desambiguação, o sistema gera um registro mínimo para a venda em vez de misturar dados.`;
             } else if (item.reason === "endereco_ausente") {
                 tech += `Regra: O cliente foi localizado no CSV, mas o endereço está completamente em branco. Sem CEP ou Rua, o script não envia o registro para geocodificação da API do Google.`;
+            } else if (item.reason === "resultado_parcial") {
+                tech += `Regra: O cadastro foi localizado no CSV, mas o número do imóvel está em branco ou ausente. Para essa situação, o sistema ainda consegue posicionar o pin no centro do CEP ou da rua (Aviso), mas é recomendado preencher o número para maior precisão.`;
             } else {
                 tech += `Regra: Inconsistência no cruzamento de dados. O registro de venda em relcliente.php não encontrou uma correspondência de Nome + Telefone no arquivo cliente.csv.`;
             }
+        }
+        tech += `\n\n`;
+
+        // 5. --- SUGESTÃO DE RESOLUÇÃO ---
+        tech += `--- SUGESTÃO DE RESOLUÇÃO ---\n`;
+        if (item.source === "Geocodificacao") {
+            const geoSolutions = {
+                fora_do_raio: "Acesse o CRM e confira se a cidade ou estado do cliente estão corretos. Se o endereço estiver correto mas fora do raio limite, a geocodificação no mapa é bloqueada por segurança.",
+                resultado_parcial: "O Google localizou a rua/bairro, mas o número do imóvel não foi exato ou o CEP está incorreto. Corrija o CEP e o número do imóvel no cadastro do CRM.",
+                estado_invalido: "O endereço fica fora do estado de São Paulo (SP). Caso esteja correto e a unidade atenda fora de SP, desative esta restrição se necessário; caso contrário, altere o estado do cliente no CRM.",
+                pais_invalido: "O endereço localizou fora do Brasil. Certifique-se de preencher o país/endereço nacional correto no cadastro."
+            };
+            tech += `Recomendação: ${geoSolutions[item.reason] || "Verifique e ajuste o endereço do cliente no CRM."}\n`;
+        } else {
+            const solutions = {
+                identificador_invalido: "Verifique por que a venda no CRM não possui um identificador de pessoa válido.",
+                cliente_inativo: "O cliente está inativo no CSV. Caso ele tenha voltado a consumir, reative seu cadastro no CRM para atualizar seu status para Ativo.",
+                nome_duplicado: "Adicione um telefone celular ou CPF ao cadastro do cliente no CRM para diferenciar homônimos e permitir a vinculação correta.",
+                endereco_ausente: "Acesse o cadastro do cliente no CRM e preencha o endereço completo (Rua, Número e CEP).",
+                resultado_parcial: "Acesse o cadastro do cliente no CRM e preencha o número do imóvel para que a localização no mapa seja exata.",
+                cliente_nao_encontrado: "Verifique se o cadastro existe no CRM e se os campos de Nome e Telefone coincidem exatamente com o registro de venda."
+            };
+            tech += `Recomendação: ${solutions[item.reason] || "Ajuste o cadastro do cliente no CRM conforme a mensagem de erro do sistema."}\n`;
         }
         return tech;
     }
 
     async function showPendings() {
-        let rows;
-        try { rows = await root.C04GeoSheets.pendings({}); }
-        catch (error) {
-            alert(error.message === "Acao invalida." ?
-                "A implantacao do Apps Script esta desatualizada. Atualize o Code.gs e crie uma nova implantacao do Web App." :
-                `Falha ao carregar pendencias: ${error.message}`);
+        try {
+            const [rows, snapshot] = await Promise.all([
+                root.C04GeoSheets.pendings({}),
+                root.C04GeoSheets.snapshot()
+            ]);
+            currentPendings = rows;
+            currentSnapshot = snapshot;
+            renderPendingTable();
+        } catch (error) {
+            alert(`Falha ao carregar dados: ${error.message}`);
             return;
         }
-        const renderRows = () => {
-            const status = document.getElementById("c04-pending-status").value, source = root.C04GeoCore.normalize(document.getElementById("c04-pending-source").value);
-            const reason = root.C04GeoCore.normalize(document.getElementById("c04-pending-reason").value), body = document.getElementById("c04-pending-body");
-            const filtered = rows.filter(item => (!status || (item.status || "open") === status) && (!source || root.C04GeoCore.normalize(item.source).includes(source)) && (!reason || root.C04GeoCore.normalize(item.reason).includes(reason)));
-            body.innerHTML = filtered.map(item => {
-                const date = item.createdAt ? new Date(item.createdAt) : null;
-                const pad = n => String(n).padStart(2, "0");
-                const dateStr = date && !Number.isNaN(date.getTime()) ?
-                    `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` : "";
-                
-                const info = PENDING_MAP[item.reason] || {
-                    motivo: item.reason || "Não Mapeado",
-                    solucao: "Analise os detalhes técnicos no botão avançado para identificar a inconsistência no cadastro."
-                };
-                const statusColor = (item.status === "resolved") ? "#10b981" : (item.status === "ignored") ? "#64748b" : "#f59e0b";
-                const statusText = (item.status === "resolved") ? "Resolvida" : (item.status === "ignored") ? "Ignorada" : "Aberta";
-                
-                return `<tr class="c04-pending-row">
-                    <td style="white-space: nowrap; color: #94a3b8; font-size: 11px;">${esc(dateStr)}</td>
-                    <td><span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${statusColor}; border: 1px solid ${statusColor}44; display: inline-block;">${statusText}</span></td>
-                    <td style="color: #cbd5e1; font-weight: 500;">${esc(item.source || "")}</td>
-                    <td style="color: #fb923c; font-weight: 600; font-size: 12px;">${esc(info.motivo)}</td>
-                    <td style="color: #f8fafc; font-weight: 600;">${esc(item.customerName || "")}</td>
-                    <td style="color: #cbd5e1; font-size: 12px; max-width: 280px;"><div class="c04-pending-collapsible">${esc(info.solucao)}</div></td>
-                    <td><button class="c04-btn alt c04-open-tech" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px;">Ver Técnico</button></td>
-                    <td style="text-align: right;"><div class="c04-pending-actions" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end; justify-content: center;">
-                        <button class="c04-btn alt c04-open-person" data-person="${esc(item.idPessoa || "")}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Cadastro</button>
-                        <button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Tratar</button>
-                        ${item.status !== "open" ? `<button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; width: 75px; text-align: center;">Reabrir</button>` : ""}
-                    </div></td>
-                </tr>`;
-            }).join("");
+        
+        const modalEl = document.getElementById("c04-settings-modal");
+        if (modalEl) modalEl.classList.add("open");
+        document.querySelectorAll(".c04-tab,.c04-tab-panel").forEach(item => item.classList.remove("active"));
+        const tabBtn = document.querySelector(`.c04-tab[data-tab="c04-tab-pendings"]`);
+        if (tabBtn) tabBtn.classList.add("active");
+        const panel = document.getElementById("c04-tab-pendings");
+        if (panel) panel.classList.add("active");
+    }
+
+    function getColValue(item, col) {
+        const info = PENDING_MAP[item.reason] || {
+            motivo: item.reason || "Não Mapeado",
+            solucao: "Analise os detalhes técnicos no botão avançado para identificar a inconsistência no cadastro.",
+            gravidade: "Crítico",
+            ping: "Não"
+        };
+        if (col === "data") {
+            const date = item.createdAt ? new Date(item.createdAt) : null;
+            const pad = n => String(n).padStart(2, "0");
+            return date && !Number.isNaN(date.getTime()) ?
+                `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` : "";
+        }
+        if (col === "gravidade") return info.gravidade || "Crítico";
+        if (col === "pin") return info.ping || "Não";
+        if (col === "fonte") return item.source || "";
+        if (col === "motivo") return info.motivo || item.reason || "Não Mapeado";
+        if (col === "cliente") return item.customerName || "";
+        return "";
+    }
+
+    function renderPendingTable() {
+        const status = document.getElementById("c04-pending-status").value;
+        const body = document.getElementById("c04-pending-body");
+        if (!body) return;
+        
+        // Reset header select-all and count
+        const selectAllCheckbox = document.getElementById("c04-pending-select-all");
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        const counter = document.getElementById("c04-pending-selected-count");
+        if (counter) counter.textContent = "Selecionados: 0";
+
+        // Filter rows
+        const filtered = currentPendings.filter(item => {
+            if (status && (item.status || "open") !== status) return false;
+            for (const col of Object.keys(pendingFilters)) {
+                const val = getColValue(item, col);
+                const filter = pendingFilters[col];
+                if (filter.regex) {
+                    try {
+                        const regex = new RegExp(filter.regex, "i");
+                        if (!regex.test(val)) return false;
+                    } catch (e) {
+                        if (!String(val).toLowerCase().includes(filter.regex.toLowerCase())) return false;
+                    }
+                }
+                if (filter.selected && filter.selected.size > 0) {
+                    if (!filter.selected.has(String(val).trim())) return false;
+                }
+            }
+            return true;
+        });
+
+        // Sort rows
+        filtered.sort((a, b) => {
+            if (pendingSort.col === "default") {
+                const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                if (dateA !== dateB) return dateB - dateA;
+                const gravA = PENDING_MAP[a.reason]?.gravidade || "Crítico";
+                const gravB = PENDING_MAP[b.reason]?.gravidade || "Crítico";
+                const wA = gravA === "Crítico" ? 3 : (gravA === "Aviso" ? 2 : 1);
+                const wB = gravB === "Crítico" ? 3 : (gravB === "Aviso" ? 2 : 1);
+                return wB - wA;
+            }
+            const valA = getColValue(a, pendingSort.col);
+            const valB = getColValue(b, pendingSort.col);
+            let cmp = 0;
+            if (pendingSort.col === "data") {
+                const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                cmp = dateA - dateB;
+            } else {
+                cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+            }
+            return pendingSort.dir === "desc" ? -cmp : cmp;
+        });
+
+        // Update header sort indicators
+        document.querySelectorAll("#c04-tab-pendings th.c04-sortable").forEach(th => {
+            const col = th.dataset.col;
+            const indicator = th.querySelector(".c04-sort-indicator");
+            if (indicator) {
+                if (pendingSort.col === col) {
+                    indicator.textContent = pendingSort.dir === "desc" ? " ▼" : " ▲";
+                } else if (pendingSort.col === "default" && col === "data") {
+                    indicator.textContent = " ▼";
+                } else {
+                    indicator.textContent = "";
+                }
+            }
+        });
+
+        // Render HTML
+        body.innerHTML = filtered.map(item => {
+            const info = PENDING_MAP[item.reason] || {
+                motivo: item.reason || "Não Mapeado",
+                solucao: "Analise os detalhes técnicos no botão avançado."
+            };
+            const dateVal = getColValue(item, "data");
+            const gravidade = info.gravidade || "Crítico";
+            const ping = info.ping || "Não";
+            const gravidadeColor = gravidade === "Crítico" ? "#ef4444" : gravidade === "Aviso" ? "#eab308" : "#3b82f6";
+            const pingColor = ping.startsWith("Sim") ? "#10b981" : "#ef4444";
+            
+            let advButtonsHtml = `<button class="c04-btn alt c04-open-tech" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px;">Ver Técnico</button>`;
+            if (item.status === "open") {
+                advButtonsHtml += `<button class="c04-btn alt c04-resolve" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; margin-left: 4px;">Tratar</button>`;
+            } else {
+                advButtonsHtml += `<button class="c04-btn alt c04-reopen" data-id="${esc(item.pendingId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; margin-left: 4px;">Reabrir</button>`;
+            }
+            
+            const clientRedirectSvg = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 4px; vertical-align: middle;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>`;
+            const clientHtml = item.idPessoa ? 
+                `<a class="c04-open-person" data-person="${esc(item.idPessoa)}" style="color: #38bdf8; text-decoration: none; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center;">${esc(item.customerName || "")}${clientRedirectSvg}</a>` :
+                `<span style="color: #f8fafc; font-weight: 600;">${esc(item.customerName || "")}</span>`;
+
+            return `<tr class="c04-pending-row">
+                <td style="text-align: center;" onclick="event.stopPropagation();"><input type="checkbox" class="c04-pending-select" data-id="${esc(item.pendingId)}" data-person="${esc(item.idPessoa || "")}"></td>
+                <td style="white-space: nowrap; color: #94a3b8; font-size: 11px;">${esc(dateVal)}</td>
+                <td><span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${gravidadeColor}; border: 1px solid ${gravidadeColor}44; display: inline-block;">${gravidade}</span></td>
+                <td><span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 12px; background: rgba(255,255,255,0.05); color: ${pingColor}; border: 1px solid ${pingColor}44; display: inline-block;">${ping}</span></td>
+                <td style="color: #cbd5e1; font-weight: 500;">${esc(item.source || "")}</td>
+                <td style="color: #fb923c; font-weight: 600; font-size: 12px;">${esc(info.motivo)}</td>
+                <td>${clientHtml}</td>
+                <td style="color: #cbd5e1; font-size: 12px; max-width: 280px;"><div class="c04-pending-collapsible">${esc(info.solucao)}</div></td>
+                <td><div style="display: flex; align-items: center;">${advButtonsHtml}</div></td>
+            </tr>`;
+        }).join("");
+
         body.querySelectorAll(".c04-pending-row").forEach(row => {
             row.style.cursor = "pointer";
             row.onclick = (e) => {
-                if (e.target.closest("button") || e.target.closest("a")) return;
+                if (e.target.closest("button") || e.target.closest("a") || e.target.closest("input[type=checkbox]")) return;
                 row.classList.toggle("c04-expanded");
             };
         });
-        body.querySelectorAll(".c04-open-person").forEach(button => { button.onclick = () => {
-            if (!button.dataset.person) return alert("Pendencia sem idPessoa.");
-            openPersonRegistration(button.dataset.person);
-        }; });
-        body.querySelectorAll(".c04-resolve").forEach(button => { button.onclick = () => resolvePending(button.dataset.id); });
-        body.querySelectorAll(".c04-reopen").forEach(button => { button.onclick = async () => {
-            const justification = prompt("Justificativa para reabrir:"); if (!justification) return;
-            await root.C04GeoSheets.reopenPending({ pendingId: button.dataset.id, visibleUser: visibleUser(), justification }); showPendings();
-            }; });
-        body.querySelectorAll(".c04-open-tech").forEach(button => { button.onclick = () => {
-            const pendingId = button.dataset.id;
-            const item = rows.find(r => r.pendingId === pendingId);
-            if (!item) return;
-            const content = document.getElementById("c04-tech-content");
-            content.textContent = getTechnicalDetails(item);
-            document.getElementById("c04-tech-modal").classList.add("open");
-            }; });
+        body.querySelectorAll(".c04-open-person").forEach(link => { 
+            link.onclick = (e) => {
+                e.preventDefault();
+                openPersonRegistration(link.dataset.person);
+            }; 
+        });
+        body.querySelectorAll(".c04-resolve").forEach(button => { 
+            button.onclick = () => resolvePending(button.dataset.id); 
+        });
+        body.querySelectorAll(".c04-reopen").forEach(button => { 
+            button.onclick = async () => {
+                const justification = prompt("Justificativa para reabrir:"); 
+                if (!justification) return;
+                await root.C04GeoSheets.reopenPending({ pendingId: button.dataset.id, visibleUser: visibleUser(), justification }); 
+                showPendings();
+            }; 
+        });
+        body.querySelectorAll(".c04-open-tech").forEach(button => { 
+            button.onclick = () => {
+                const pendingId = button.dataset.id;
+                const item = currentPendings.find(r => r.pendingId === pendingId);
+                if (!item) return;
+                if (item.idPessoa && currentSnapshot) {
+                    const cust = currentSnapshot.customers.find(c => String(c.idPessoa) === String(item.idPessoa));
+                    if (cust) {
+                        const geo = cust.idLocalizacao ? currentSnapshot.geocodes.find(g => Number(g.idLocalizacao) === Number(cust.idLocalizacao)) : null;
+                        if (!item.record) item.record = {};
+                        if (!item.record.customer) {
+                            item.record.customer = {
+                                idPessoa: cust.idPessoa,
+                                name: cust.name,
+                                phone: cust.phone,
+                                document: cust.document,
+                                status: cust.status,
+                                pets: cust.doguinhos || cust.pets,
+                                doguinhos: cust.doguinhos,
+                                idLocalizacao: cust.idLocalizacao,
+                                street: geo ? geo.rua || geo.street : "",
+                                number: geo ? geo.numero || geo.number : "",
+                                neighborhood: geo ? geo.bairro || geo.neighborhood : "",
+                                city: geo ? geo.cidade || geo.city : "",
+                                state: geo ? geo.estado || geo.state : "",
+                                zip: geo ? geo.cep || geo.zip : "",
+                                country: geo ? geo.pais || geo.country : "Brasil"
+                            };
+                        }
+                    }
+                }
+                const content = document.getElementById("c04-tech-content");
+                content.textContent = getTechnicalDetails(item);
+                document.getElementById("c04-tech-modal").classList.add("open");
+            }; 
+        });
+        
+        const updateSelectedCount = () => {
+            const checked = body.querySelectorAll(".c04-pending-select:checked").length;
+            const counter = document.getElementById("c04-pending-selected-count");
+            if (counter) counter.textContent = `Selecionados: ${checked}`;
         };
-        ["c04-pending-status", "c04-pending-source", "c04-pending-reason"].forEach(id => { document.getElementById(id).oninput = renderRows; });
-        renderRows();
-        document.getElementById("c04-pending-modal").classList.add("open");
+        body.querySelectorAll(".c04-pending-select").forEach(cb => {
+            cb.onchange = updateSelectedCount;
+        });
     }
+
+    function getOrCreateFilterDropdown() {
+        let dropdown = document.getElementById("c04-pending-filter-dropdown");
+        if (!dropdown) {
+            dropdown = document.createElement("div");
+            dropdown.id = "c04-pending-filter-dropdown";
+            dropdown.style.cssText = `
+                position: absolute;
+                z-index: 100000;
+                background: #1e293b;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5);
+                padding: 12px;
+                width: 250px;
+                display: none;
+                flex-direction: column;
+                gap: 8px;
+            `;
+            dropdown.innerHTML = `
+                <div style="font-weight: 600; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Filtrar Coluna</span>
+                    <span id="c04-pending-filter-close" style="cursor: pointer; font-size: 14px; font-weight: bold; color: #ef4444;">&times;</span>
+                </div>
+                <div>
+                    <input type="text" id="c04-pending-filter-regex" placeholder="Filtrar por RegEx/Texto" style="width: 100%; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; color: #fff; padding: 6px; font-size: 12px; outline: none;">
+                </div>
+                <div style="font-size: 11px; color: #94a3b8; font-weight: 600; margin-top: 4px;">Valores únicos:</div>
+                <div id="c04-pending-filter-values" style="max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; background: rgba(0,0,0,0.1);">
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <button class="c04-btn" id="c04-pending-filter-apply" style="flex: 1; padding: 4px 8px; font-size: 11px; height: 26px; border-radius: 6px;">Aplicar</button>
+                    <button class="c04-btn alt" id="c04-pending-filter-clear" style="flex: 1; padding: 4px 8px; font-size: 11px; height: 26px; border-radius: 6px;">Limpar</button>
+                </div>
+            `;
+            document.getElementById("c04-geo-panel").appendChild(dropdown);
+            dropdown.querySelector("#c04-pending-filter-close").onclick = () => { dropdown.style.display = "none"; };
+        }
+        return dropdown;
+    }
+
+    function openFilterDropdown(triggerEl, col) {
+        const dropdown = getOrCreateFilterDropdown();
+        const panelRect = document.getElementById("c04-geo-panel").getBoundingClientRect();
+        const triggerRect = triggerEl.getBoundingClientRect();
+        let left = triggerRect.left - panelRect.left;
+        let top = triggerRect.bottom - panelRect.top + 4;
+        if (left + 250 > panelRect.width) {
+            left = panelRect.width - 260;
+        }
+        dropdown.style.left = `${left}px`;
+        dropdown.style.top = `${top}px`;
+        dropdown.style.display = "flex";
+
+        const regexInput = dropdown.querySelector("#c04-pending-filter-regex");
+        regexInput.value = pendingFilters[col]?.regex || "";
+
+        const valuesContainer = dropdown.querySelector("#c04-pending-filter-values");
+        valuesContainer.innerHTML = "";
+
+        const uniqueValuesSet = new Set();
+        currentPendings.forEach(item => {
+            const val = getColValue(item, col);
+            if (val !== undefined && val !== null) {
+                uniqueValuesSet.add(String(val).trim());
+            }
+        });
+        const uniqueValues = Array.from(uniqueValuesSet).sort((a, b) => a.localeCompare(b));
+        const selectedSet = pendingFilters[col]?.selected || new Set();
+
+        if (uniqueValues.length === 0) {
+            valuesContainer.innerHTML = `<div style="color: #64748b; font-size: 11px; text-align: center; padding: 4px;">Nenhum valor</div>`;
+        } else {
+            uniqueValues.forEach(val => {
+                const label = document.createElement("label");
+                label.style.cssText = "display: flex; align-items: center; gap: 6px; font-size: 11px; color: #cbd5e1; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
+                const isChecked = selectedSet.has(val) ? "checked" : "";
+                label.innerHTML = `<input type="checkbox" class="c04-pending-value-opt" value="${esc(val)}" ${isChecked}> <span>${esc(val)}</span>`;
+                valuesContainer.appendChild(label);
+            });
+        }
+
+        dropdown.querySelector("#c04-pending-filter-apply").onclick = () => {
+            const regexVal = regexInput.value.trim();
+            const selectedOpts = Array.from(valuesContainer.querySelectorAll(".c04-pending-value-opt:checked")).map(cb => cb.value);
+            pendingFilters[col] = {
+                regex: regexVal,
+                selected: new Set(selectedOpts)
+            };
+            const isActive = regexVal !== "" || selectedOpts.length > 0;
+            triggerEl.style.color = isActive ? "#fb923c" : "#64748b";
+            triggerEl.style.fontWeight = isActive ? "bold" : "normal";
+            dropdown.style.display = "none";
+            renderPendingTable();
+        };
+
+        dropdown.querySelector("#c04-pending-filter-clear").onclick = () => {
+            pendingFilters[col] = {
+                regex: "",
+                selected: new Set()
+            };
+            triggerEl.style.color = "#64748b";
+            triggerEl.style.fontWeight = "normal";
+            dropdown.style.display = "none";
+            renderPendingTable();
+        };
+    }
+
+    function handleReescanClick() {
+        const body = document.getElementById("c04-pending-body");
+        if (!body) return;
+        const checkboxes = body.querySelectorAll(".c04-pending-select:checked");
+        let pendingIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+        if (pendingIds.length === 0) {
+            const openPendings = currentPendings.filter(p => (p.status || "open") === "open");
+            pendingIds = openPendings.map(p => p.pendingId);
+        }
+        if (pendingIds.length === 0) {
+            alert("Nenhuma pendência aberta para re-scan.");
+            return;
+        }
+        if (pendingIds.length > 5) {
+            if (!confirm(`Deseja executar re-scan de ${pendingIds.length} pendências?`)) {
+                return;
+            }
+        }
+        retryPendings(pendingIds);
+    }
+
+    function setupPendingTabBindings() {
+        const selectAllCheckbox = document.getElementById("c04-pending-select-all");
+        if (selectAllCheckbox) {
+            selectAllCheckbox.onchange = () => {
+                const body = document.getElementById("c04-pending-body");
+                if (body) {
+                    body.querySelectorAll(".c04-pending-select").forEach(cb => {
+                        cb.checked = selectAllCheckbox.checked;
+                    });
+                    const checked = body.querySelectorAll(".c04-pending-select:checked").length;
+                    const counter = document.getElementById("c04-pending-selected-count");
+                    if (counter) counter.textContent = `Selecionados: ${checked}`;
+                }
+            };
+        }
+
+        const bulkOpen = document.getElementById("c04-pending-bulk-open");
+        if (bulkOpen) {
+            bulkOpen.onclick = () => {
+                const body = document.getElementById("c04-pending-body");
+                if (!body) return;
+                const checkboxes = body.querySelectorAll(".c04-pending-select:checked");
+                const idPessoas = Array.from(checkboxes).map(cb => cb.dataset.person).filter(id => !!id);
+                if (idPessoas.length === 0) {
+                    alert("Nenhuma pendência selecionada possui idPessoa.");
+                    return;
+                }
+                if (idPessoas.length > 5 && !confirm(`Deseja abrir ${idPessoas.length} cadastros de uma vez? Isso pode abrir muitas abas no seu navegador.`)) {
+                    return;
+                }
+                idPessoas.forEach(id => openPersonRegistration(id));
+            };
+        }
+        
+        const bulkResolve = document.getElementById("c04-pending-bulk-resolve");
+        if (bulkResolve) {
+            bulkResolve.onclick = async () => {
+                const body = document.getElementById("c04-pending-body");
+                if (!body) return;
+                const checkboxes = body.querySelectorAll(".c04-pending-select:checked");
+                const pendingIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+                if (pendingIds.length === 0) {
+                    alert("Nenhuma pendência selecionada.");
+                    return;
+                }
+                const action = prompt("Ação para as pendências selecionadas: resolve, retry_geocode ou ignore", "resolve");
+                if (!["resolve", "retry_geocode", "ignore"].includes(action)) return;
+                
+                const justification = prompt(`Justificativa obrigatória para tratar ${pendingIds.length} pendências:`);
+                if (!justification) return;
+                
+                try {
+                    await Promise.all(pendingIds.map(pendingId => 
+                        root.C04GeoSheets.resolvePending({
+                            pendingId,
+                            action,
+                            correctedIdPessoa: "",
+                            correctedAddress: "",
+                            visibleUser: visibleUser(),
+                            justification
+                        })
+                    ));
+                    alert(`${pendingIds.length} pendências tratadas com sucesso.`);
+                } catch (error) {
+                    alert(`Erro ao tratar pendências: ${error.message}`);
+                }
+                showPendings();
+            };
+        }
+        
+        const reescanBtn = document.getElementById("c04-pending-reescan");
+        if (reescanBtn) {
+            reescanBtn.onclick = handleReescanClick;
+        }
+
+        const pendingStatus = document.getElementById("c04-pending-status");
+        if (pendingStatus) {
+            pendingStatus.onchange = renderPendingTable;
+        }
+
+        // Setup sort headers
+        document.querySelectorAll("#c04-tab-pendings th.c04-sortable").forEach(th => {
+            th.onclick = (e) => {
+                if (e.target.classList.contains("c04-filter-trigger")) {
+                    e.stopPropagation();
+                    const col = th.dataset.col;
+                    openFilterDropdown(e.target, col);
+                    return;
+                }
+                const col = th.dataset.col;
+                if (pendingSort.col === col) {
+                    pendingSort.dir = pendingSort.dir === "asc" ? "desc" : "asc";
+                } else {
+                    pendingSort.col = col;
+                    pendingSort.dir = "asc";
+                }
+                renderPendingTable();
+            };
+        });
+
+        // Close dropdown when clicking outside
+        closeDropdownOnOutsideClick = (e) => {
+            const dropdown = document.getElementById("c04-pending-filter-dropdown");
+            if (dropdown && dropdown.style.display === "flex") {
+                const isClickInside = dropdown.contains(e.target) || e.target.classList.contains("c04-filter-trigger");
+                if (!isClickInside) {
+                    dropdown.style.display = "none";
+                }
+            }
+        };
+        document.addEventListener("click", closeDropdownOnOutsideClick);
+    }
+
     async function resolvePending(pendingId) {
         const action = prompt("Acao: resolve, retry_geocode ou ignore", "resolve");
         if (!["resolve", "retry_geocode", "ignore"].includes(action)) return;
@@ -662,6 +1208,150 @@
         await root.C04GeoSheets.resolvePending({ pendingId, action,
             correctedIdPessoa, correctedAddress, visibleUser: visibleUser(), justification });
         showPendings();
+    }
+    async function retryPendings(pendingIds) {
+        if (!pendingIds || pendingIds.length === 0) return;
+        
+        const syncButton = document.getElementById("c04-sync");
+        const originalText = syncButton.textContent;
+        syncButton.textContent = "Testando...";
+        syncButton.disabled = true;
+        
+        try {
+            root.C04GeoData._csvCache = null;
+            const csvText = await root.C04GeoData.collectCustomersCsv({ cancelled: false });
+            const csvRows = root.C04GeoCore.parseCsv(csvText);
+            
+            const allPendings = await root.C04GeoSheets.pendings({});
+            const snapshot = await root.C04GeoSheets.snapshot();
+            
+            let resolvedCount = 0;
+            let updatedCount = 0;
+            
+            for (const pendingId of pendingIds) {
+                const p = allPendings.find(item => item.pendingId === pendingId);
+                if (!p || !p.record) continue;
+                
+                const idPessoa = p.idPessoa;
+                const sale = p.record;
+                
+                const sales = [sale];
+                const details = new Map([[String(idPessoa), sale.products || []]]);
+                
+                const built = root.C04GeoData.buildRelevantCustomers(sales, details, csvRows, snapshot.overrides || []);
+                
+                if (built.pending && built.pending.length > 0) {
+                    const newPending = built.pending[0];
+                    await root.C04GeoSheets.stageBatch({
+                        pendings: [{
+                            pendingId: p.pendingId,
+                            source: newPending.source,
+                            reason: newPending.reason,
+                            idPessoa: p.idPessoa,
+                            customerName: p.customerName,
+                            message: newPending.message,
+                            status: "open",
+                            record: sale,
+                            createdAt: new Date().toISOString()
+                        }]
+                    });
+                    updatedCount++;
+                    continue;
+                }
+                
+                if (built.persistentCustomers && built.persistentCustomers.length > 0) {
+                    const customer = built.persistentCustomers[0];
+                    const geoResult = await root.C04GeoMap.geocode(
+                        [customer],
+                        snapshot.geocodes,
+                        () => {},
+                        { cancelled: false },
+                        { forceFailed: true }
+                    );
+                    
+                    if (geoResult.rows && geoResult.rows.length > 0) {
+                        await root.C04GeoSheets.stageBatch({
+                            customers: [customer],
+                            geocodes: geoResult.rows
+                        });
+                    }
+                    
+                    if (geoResult.customers.length === 0) {
+                        const newReject = geoResult.rejected[0];
+                        let msg = `Resultado rejeitado.`;
+                        if (newReject) {
+                            const inputAddr = `${newReject.customer.street || ""}, ${newReject.customer.number || ""}, ${newReject.customer.neighborhood || ""}, ${newReject.customer.city || ""} - ${newReject.customer.zip || ""}`;
+                            const foundAddr = newReject.formattedAddress || "não encontrado";
+                            msg = `Resultado rejeitado (${newReject.distanceKm ? newReject.distanceKm.toFixed(1) : 0} km). Erro: ${newReject.reason}.\n• Cadastrado: "${inputAddr}"\n• Encontrado: "${foundAddr}"`;
+                        }
+                        
+                        await root.C04GeoSheets.stageBatch({
+                            pendings: [{
+                                pendingId: p.pendingId,
+                                source: "Geocodificacao",
+                                reason: newReject ? newReject.reason : "erro_geocodificacao",
+                                idPessoa: p.idPessoa,
+                                customerName: p.customerName,
+                                message: msg,
+                                status: "open",
+                                record: sale,
+                                createdAt: new Date().toISOString()
+                            }]
+                        });
+                        updatedCount++;
+                    } else {
+                        const newWarning = geoResult.rejected.find(r => r.isWarning);
+                        
+                        if (newWarning) {
+                            const inputAddr = `${newWarning.customer.street || ""}, ${newWarning.customer.number || ""}, ${newWarning.customer.neighborhood || ""}, ${newWarning.customer.city || ""} - ${newWarning.customer.zip || ""}`;
+                            const foundAddr = newWarning.formattedAddress || "não encontrado";
+                            const msg = `Alerta de geocodificação (${newWarning.reason}).\n• Cadastrado: "${inputAddr}"\n• Encontrado: "${foundAddr}"`;
+                            
+                            await root.C04GeoSheets.stageBatch({
+                                pendings: [{
+                                    pendingId: p.pendingId,
+                                    source: "Geocodificacao",
+                                    reason: newWarning.reason,
+                                    idPessoa: p.idPessoa,
+                                    customerName: p.customerName,
+                                    message: msg,
+                                    status: "open",
+                                    record: sale,
+                                    createdAt: new Date().toISOString()
+                                }]
+                            });
+                            updatedCount++;
+                        } else {
+                            await root.C04GeoSheets.resolvePending({
+                                pendingId: p.pendingId,
+                                action: "resolve",
+                                visibleUser: visibleUser(),
+                                justification: "Sincronizado e geocodificado com sucesso via re-scan individual."
+                            });
+                            resolvedCount++;
+                        }
+                        
+                        const geocodedCust = geoResult.customers[0];
+                        const idx = customers.findIndex(c => String(c.idPessoa) === String(idPessoa));
+                        if (idx !== -1) {
+                            customers[idx] = Object.assign({}, customers[idx], geocodedCust);
+                        } else {
+                            customers.push(geocodedCust);
+                        }
+                    }
+                }
+            }
+            
+            render();
+            await showPendings();
+            
+            alert(`Re-scan concluído!\nResolvido: ${resolvedCount} pendência(s)\nAtualizado: ${updatedCount} pendência(s) com erros/avisos.`);
+        } catch (error) {
+            alert(`Erro durante o re-scan das pendências: ${error.message}`);
+        } finally {
+            syncButton.textContent = originalText;
+            syncButton.disabled = false;
+        }
     }
     function openPersonRegistration(idPessoa) {
         const popupName = `c04-person-${idPessoa}`, popup = window.open("", popupName);
@@ -677,9 +1367,7 @@
     async function diagnostic(action) {
         const node = document.getElementById("c04-diagnostic-result"); node.innerHTML = "<p>Executando...</p>";
         try { showDiagnostic(action, await root.C04GeoSheets[action]()); }
-        catch (error) { node.textContent = error.message === "Acao invalida." ?
-            "Erro: implantacao do Apps Script desatualizada. Atualize o Code.gs e crie uma nova implantacao do Web App." :
-            `Erro: ${error.message}`; }
+        catch (error) { node.textContent = `Erro: ${error.message}`; }
     }
     function showDiagnostic(title, result) {
         const node = document.getElementById("c04-diagnostic-result"), status = result && result.ok === false ? "error" :
@@ -694,25 +1382,272 @@
         })]);
     }
     async function generalDiagnostic() {
-        const node = document.getElementById("c04-diagnostic-result"); node.innerHTML = "<p>Executando diagnostico geral...</p>";
-        const checks = [];
-        const period = { start: document.getElementById("c04-start").value, end: document.getElementById("c04-end").value };
-        for (const item of [{ title: "Planilha e Apps Script", timeout: 30000, run: () => root.C04GeoSheets.healthCheck() },
-            { title: "Escrita artificial", run: () => root.C04GeoSheets.testWrite() },
-            { title: "Staging artificial", run: () => root.C04GeoSheets.testStaging() },
-            { title: "Mapa e Map ID", run: () => Promise.resolve(root.C04GeoMap.diagnostics()) },
-            { title: "Geocodificacao artificial", run: () => root.C04GeoMap.diagnosticGeocode() },
-            { title: "Coleta sem escrita", timeout: 60000, run: () => root.C04GeoData.preflight(period, () => {}, { cancelled: false }) }]) {
-            try { checks.push({ title: item.title, result: await withTimeout(item.run, item.timeout || 30000, item.title) }); }
-            catch (error) { checks.push({ title: item.title, result: { ok: false, error: error.message } }); }
+        const node = document.getElementById("c04-diagnostic-result");
+        if (!node) return;
+        node.innerHTML = "<p>Executando diagnóstico geral do Supabase (conexão, escrita, integridade e tamanho físico)...</p>";
+        try {
+            let connectionOk = false, writeOk = false, integrityOk = false, dbSizeData = null;
+            let connectionDetail = "", writeDetail = "", integrityDetail = "", dbSizeDetail = "";
+            
+            try {
+                const res = await root.C04GeoSheets.healthCheck();
+                connectionOk = res.ok;
+                connectionDetail = JSON.stringify(res, null, 2);
+            } catch (e) {
+                connectionDetail = e.message;
+            }
+
+            try {
+                const res = await root.C04GeoSheets.testWrite();
+                writeOk = res.ok;
+                writeDetail = JSON.stringify(res, null, 2);
+            } catch (e) {
+                writeDetail = e.message;
+            }
+
+            try {
+                const res = await root.C04GeoSheets.testStaging();
+                integrityOk = res.ok;
+                integrityDetail = JSON.stringify(res, null, 2);
+            } catch (e) {
+                integrityDetail = e.message;
+            }
+
+            try {
+                const res = await root.C04GeoSheets.getDbSize();
+                dbSizeData = res;
+                dbSizeDetail = JSON.stringify(res, null, 2);
+            } catch (e) {
+                dbSizeDetail = e.message;
+            }
+
+            const formatSize = bytes => {
+                if (!bytes || Number.isNaN(bytes)) return "0 B";
+                const k = 1024;
+                const sizes = ["B", "KB", "MB", "GB"];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+            };
+
+            const dbSizeBytes = dbSizeData ? Number(dbSizeData.database_size_bytes) : 0;
+            const dbSizeStr = formatSize(dbSizeBytes);
+            const dbLimitStr = "500 MB";
+            const dbPercent = dbSizeBytes ? ((dbSizeBytes / (500 * 1024 * 1024)) * 100).toFixed(2) : "0";
+
+            let tableRowsHtml = "";
+            if (dbSizeData && dbSizeData.table_sizes) {
+                for (const [table, size] of Object.entries(dbSizeData.table_sizes)) {
+                    tableRowsHtml += `<li><b>${table}:</b> ${formatSize(Number(size))}</li>`;
+                }
+            }
+
+            const okBadge = '<span style="color:#10b981;font-weight:bold;">[OK]</span>';
+            const failBadge = '<span style="color:#ef4444;font-weight:bold;">[FALHA]</span>';
+
+            node.innerHTML = `
+                <div class="c04-diagnostic-card ok" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 16px;">
+                    <h5 style="margin-top:0;font-size:14px;color:#fb923c;margin-bottom:10px;">Relatório de Diagnóstico Consolidado</h5>
+                    
+                    <ul style="list-style:none;padding:0;margin:0 0 12px;font-size:12px;line-height:1.8;">
+                        <li>📡 <b>Conexão Supabase:</b> ${connectionOk ? okBadge : failBadge}</li>
+                        <li>✍️ <b>Teste de Escrita:</b> ${writeOk ? okBadge : failBadge}</li>
+                        <li>🔍 <b>Integridade de Tabelas:</b> ${integrityOk ? okBadge : failBadge}</li>
+                        <li>💾 <b>Armazenamento Físico:</b> <strong>${dbSizeStr}</strong> de <strong>${dbLimitStr}</strong> (${dbPercent}%)</li>
+                        <li>📋 <b>Logs de Execução:</b> ${dbSizeData ? dbSizeData.log_count : 0} registros (${formatSize(dbSizeData ? dbSizeData.log_size_bytes : 0)})</li>
+                        <li>📦 <b>Backups de Segurança:</b> ${dbSizeData ? dbSizeData.backup_count : 0} salvos (${formatSize(dbSizeData ? dbSizeData.backup_size_bytes : 0)})</li>
+                    </ul>
+                    
+                    <details style="margin-bottom:8px;font-size:11px;">
+                        <summary style="cursor:pointer;color:#fb923c;font-weight:bold;">Tamanhos Detalhados das Tabelas</summary>
+                        <ul style="padding-left:16px;margin-top:4px;">
+                            ${tableRowsHtml || "<li>Sem dados de tabelas</li>"}
+                        </ul>
+                    </details>
+                    
+                    <details style="font-size:11px;">
+                        <summary style="cursor:pointer;color:#cbd5e1;">Logs Técnicos Completos (JSON)</summary>
+                        <pre style="background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;overflow-x:auto;margin-top:4px;white-space:pre-wrap;text-align:left;">
+Conexão:\n${connectionDetail}\n\nEscrita:\n${writeDetail}\n\nIntegridade:\n${integrityDetail}\n\nArmazenamento:\n${dbSizeDetail}
+                        </pre>
+                    </details>
+                </div>
+            `;
+        } catch (error) {
+            node.innerHTML = `<div class="c04-diagnostic-card error"><b>Erro Geral de Diagnóstico:</b><p>${error.message}</p></div>`;
         }
-        node.innerHTML = ""; checks.forEach(item => {
-            const holder = document.createElement("div"); node.appendChild(holder);
-            const previous = document.getElementById("c04-diagnostic-result"); previous.appendChild(holder);
-            const status = item.result.ok === false ? "error" : item.result.warning ? "warn" : "ok";
-            holder.className = `c04-diagnostic-card ${status}`;
-            holder.innerHTML = `<b>${root.C04GeoCore.escapeHtml(item.title)}: ${status === "ok" ? "OK" : status === "warn" ? "Atencao" : "Erro"}</b><details><summary>Detalhes tecnicos</summary><pre>${root.C04GeoCore.escapeHtml(JSON.stringify(item.result, null, 2))}</pre></details>`;
-        });
+    }
+
+    async function loadBackupsList() {
+        const body = document.getElementById("c04-backup-list-body");
+        if (!body) return;
+        try {
+            const backups = await root.C04GeoSheets.getBackups();
+            if (!backups || backups.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #64748b; padding: 12px;">Nenhum backup encontrado.</td></tr>`;
+                return;
+            }
+            
+            const formatSize = bytes => {
+                if (!bytes) return "0 B";
+                const k = 1024;
+                const sizes = ["B", "KB", "MB"];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+            };
+            
+            body.innerHTML = backups.map(b => {
+                const date = b.createdAt ? new Date(b.createdAt) : null;
+                const pad = n => String(n).padStart(2, "0");
+                const dateStr = date && !Number.isNaN(date.getTime()) ?
+                    `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` : "";
+                
+                return `<tr>
+                    <td>${esc(dateStr)}</td>
+                    <td>${formatSize(b.sizeBytes)}</td>
+                    <td>${esc(b.visibleUser || "")}</td>
+                    <td style="text-align: right; white-space: nowrap;">
+                        <button class="c04-btn alt c04-restore-backup" data-id="${esc(b.backupId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; margin-right: 4px; background: #065f46; border-color: #065f46; color:#fff;">Restaurar</button>
+                        <button class="c04-btn danger c04-delete-backup" data-id="${esc(b.backupId)}" style="padding: 4px 8px; font-size: 11px; border-radius: 6px; height: 26px; background: #991b1b; border-color: #991b1b;">Deletar</button>
+                    </td>
+                </tr>`;
+            }).join("");
+            
+            body.querySelectorAll(".c04-restore-backup").forEach(btn => {
+                btn.onclick = async () => {
+                    const backupId = btn.dataset.id;
+                    if (!root.confirm("ATENÇÃO: Deseja realmente restaurar este backup? Isso substituirá todos os dados atuais das tabelas do GEO (clientes, geocodes, vendas, pendências, etc.) pelos dados do backup. Essa ação é irreversível!")) {
+                        return;
+                    }
+                    btn.disabled = true;
+                    btn.textContent = "Restaurando...";
+                    try {
+                        await root.C04GeoSheets.restoreBackup({ backupId, visibleUser: visibleUser() });
+                        alert("Backup restaurado com sucesso!");
+                        if (customers.length) run(false);
+                    } catch (e) {
+                        alert(`Erro ao restaurar backup: ${e.message}`);
+                    } finally {
+                        btn.disabled = false;
+                        btn.textContent = "Restaurar";
+                        loadBackupsList();
+                    }
+                };
+            });
+            
+            body.querySelectorAll(".c04-delete-backup").forEach(btn => {
+                btn.onclick = async () => {
+                    const backupId = btn.dataset.id;
+                    if (!root.confirm("Deseja realmente deletar permanentemente este backup de segurança?")) {
+                        return;
+                    }
+                    btn.disabled = true;
+                    try {
+                        await root.C04GeoSheets.deleteBackup({ backupId, visibleUser: visibleUser() });
+                        alert("Backup deletado com sucesso!");
+                    } catch (e) {
+                        alert(`Erro ao deletar backup: ${e.message}`);
+                    } finally {
+                        loadBackupsList();
+                    }
+                };
+            });
+        } catch (e) {
+            body.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #ef4444; padding: 12px;">Erro ao carregar backups: ${e.message}</td></tr>`;
+        }
+    }
+    
+    async function createManualBackup() {
+        const btn = document.getElementById("c04-create-manual-backup");
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Criando...";
+        }
+        try {
+            await root.C04GeoSheets.createBackup({ visibleUser: visibleUser() });
+            alert("Backup manual de segurança criado com sucesso!");
+            loadBackupsList();
+        } catch (e) {
+            alert(`Erro ao criar backup: ${e.message}`);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = "Criar Backup Manual";
+            }
+        }
+    }
+
+    async function saveRetentionSetting() {
+        const retentionInput = document.getElementById("c04-log-retention-input");
+        const logRetentionMonths = retentionInput ? Number(retentionInput.value) : 12;
+        root.C04GeoConfig.logRetentionMonths = logRetentionMonths;
+        const cfg = configFromForm();
+        cfg.logRetentionMonths = logRetentionMonths;
+        try {
+            await root.C04GeoSheets.saveSettings(cfg);
+            alert("Regra de retenção de logs salva com sucesso!");
+        } catch (e) {
+            alert(`Erro ao salvar regra: ${e.message}`);
+        }
+    }
+
+    async function pruneLogsNow() {
+        const retentionInput = document.getElementById("c04-log-retention-input");
+        const retentionMonths = retentionInput ? Number(retentionInput.value) : 12;
+        const node = document.getElementById("c04-diagnostic-result");
+        if (node) node.innerHTML = `<p>Executando limpeza de logs anteriores a ${retentionMonths} meses...</p>`;
+        try {
+            await root.C04GeoSheets.cleanup({ retentionMonths, visibleUser: visibleUser() });
+            if (node) node.innerHTML = `<div class='c04-diagnostic-card ok'><b>Limpeza de Logs: OK</b><p>Limpeza concluída com sucesso (retidos últimos ${retentionMonths} meses).</p></div>`;
+            generalDiagnostic(); // Refresh size info
+        } catch (e) {
+            if (node) node.innerHTML = `<div class='c04-diagnostic-card error'><b>Erro na limpeza:</b><p>${e.message}</p></div>`;
+        }
+    }
+
+    async function clearAllLogs() {
+        if (!root.confirm("ATENÇÃO: Deseja realmente excluir permanentemente TODOS os logs de execução? Essa ação não pode ser desfeita!")) {
+            return;
+        }
+        const node = document.getElementById("c04-diagnostic-result");
+        if (node) node.innerHTML = "<p>Excluindo todos os logs...</p>";
+        try {
+            await root.C04GeoSheets.resetDatabase({ confirmation: "LIMPAR BANCO GEO", tables: ["c04_logs"], visibleUser: visibleUser() });
+            if (node) node.innerHTML = "<div class='c04-diagnostic-card ok'><b>Limpeza Total: OK</b><p>Todos os logs foram apagados com sucesso.</p></div>";
+            generalDiagnostic();
+        } catch (e) {
+            if (node) node.innerHTML = `<div class='c04-diagnostic-card error'><b>Erro ao apagar logs:</b><p>${e.message}</p></div>`;
+        }
+    }
+
+    function showDiagnosticsTab() {
+        document.querySelectorAll(".c04-tab,.c04-tab-panel").forEach(item => item.classList.remove("active"));
+        const tabBtn = document.querySelector(`.c04-tab[data-tab="c04-tab-diagnostics"]`);
+        if (tabBtn) tabBtn.classList.add("active");
+        const panel = document.getElementById("c04-tab-diagnostics");
+        if (panel) panel.classList.add("active");
+        
+        loadBackupsList();
+        
+        const retentionInput = document.getElementById("c04-log-retention-input");
+        if (retentionInput) {
+            retentionInput.value = root.C04GeoConfig.logRetentionMonths || 12;
+        }
+    }
+
+    async function autoBackupCheck() {
+        if (!root.C04GeoSheets.configured()) return;
+        try {
+            const backups = await root.C04GeoSheets.getBackups();
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const todayBackup = backups.find(b => b.createdAt && b.createdAt.slice(0, 10) === todayStr && b.visibleUser === "Auto-Backup");
+            if (!todayBackup) {
+                console.log("[C04 GEO] Iniciando auto-backup diário...");
+                await root.C04GeoSheets.createBackup({ visibleUser: "Auto-Backup" });
+                console.log("[C04 GEO] Auto-backup diário concluído com sucesso.");
+            }
+        } catch (err) {
+            console.warn("[C04 GEO] Falha ao realizar auto-backup diário:", err.message);
+        }
     }
     async function preflight() {
         const node = document.getElementById("c04-diagnostic-result"), token = { cancelled: false };
@@ -722,6 +1657,51 @@
             const result = await root.C04GeoData.preflight(period, progress, token);
             showDiagnostic("Coleta sem escrita", result);
         } catch (error) { node.textContent = `Erro: ${error.message}`; }
+    }
+    async function retryFailedGeocodes() {
+        const node = document.getElementById("c04-diagnostic-result");
+        node.innerHTML = "<p>Carregando dados do Supabase...</p>";
+        try {
+            const snapshot = await root.C04GeoSheets.snapshot();
+            const failedCustomers = snapshot.customers.filter(c => {
+                const geo = snapshot.geocodes.find(g => String(g.idPessoa) === String(c.idPessoa));
+                return !geo || geo.status === "failed";
+            });
+
+            if (failedCustomers.length === 0) {
+                node.innerHTML = "<div class='c04-diagnostic-card ok'><b>Recalcular Geocodificação:</b><p>Nenhuma falha de geocodificação detectada.</p></div>";
+                return;
+            }
+
+            if (!root.confirm(`Existem ${failedCustomers.length} clientes com falhas de geocodificação ou sem coordenadas. Deseja iniciar o recálculo?`)) {
+                node.innerHTML = "<p>Operação cancelada pelo usuário.</p>";
+                return;
+            }
+
+            node.innerHTML = `<p>Geocodificando 0 de ${failedCustomers.length} falhas...</p>`;
+            
+            const result = await root.C04GeoMap.geocode(failedCustomers, snapshot.geocodes, (done, total) => {
+                node.innerHTML = `<p>Geocodificando falhas: ${done} de ${total}...</p>`;
+            }, { cancelled: false }, { forceFailed: true });
+
+            node.innerHTML = "<p>Salvando novas coordenadas no Supabase...</p>";
+            
+            const size = root.C04GeoConfig.batchSize;
+            let sentCount = 0;
+            for (let index = 0; index < result.rows.length; index += size) {
+                const batch = result.rows.slice(index, index + size);
+                await root.C04GeoSheets.stageBatch({ geocodes: batch });
+                sentCount += batch.length;
+            }
+
+            node.innerHTML = `<div class='c04-diagnostic-card ok'><b>Recálculo Concluído: OK</b><p>Geocodificou e atualizou ${sentCount} cliente(s) no banco de dados.</p></div>`;
+            
+            if (customers.length) {
+                run(false);
+            }
+        } catch (e) {
+            node.innerHTML = `<div class='c04-diagnostic-card error'><b>Erro no Recálculo:</b><p>${e.message}</p></div>`;
+        }
     }
     function requestFullScan() {
         if (!root.C04GeoCore.canRunFullScan(visibleUser())) return;
@@ -753,6 +1733,7 @@
         setVal("c04-opacity", c.heatmaps.opacity);
         setVal("c04-radius", c.heatmaps.radius);
         setVal("c04-intensity", c.heatmaps.intensity);
+        setVal("c04-log-retention-input", c.logRetentionMonths || 12);
         if (c.colors) {
             setVal("c04-color-client", c.colors.clientPin);
             setVal("c04-color-store", c.colors.storePin);
@@ -780,6 +1761,7 @@
         }
     }
     function bind() {
+        setupPendingTabBindings();
         document.getElementById("c04-geo-close").onclick = destroy; document.getElementById("c04-sync").onclick = () => run(false);
         document.getElementById("c04-toggle-sidebar").onclick = () => {
             const main = document.getElementById("c04-geo-main");
@@ -826,12 +1808,33 @@
             setTimeout(() => root.C04GeoMap.resize(), 250);
         };
         document.addEventListener("fullscreenchange", fullscreenHandler);
-        const full = document.getElementById("c04-full"); if (full) full.onclick = requestFullScan;
-        document.getElementById("c04-settings").onclick = () => document.getElementById("c04-settings-modal").classList.add("open");
-        document.getElementById("c04-logs").onclick = showLogs; document.getElementById("c04-pendings").onclick = showPendings;
+        document.getElementById("c04-settings").onclick = () => {
+            document.getElementById("c04-settings-modal").classList.add("open");
+            const activeTab = document.querySelector(".c04-tab.active");
+            if (!activeTab) {
+                const firstTab = document.querySelector(".c04-tab");
+                if (firstTab) firstTab.click();
+            } else {
+                const tab = activeTab.dataset.tab;
+                if (tab === "c04-tab-pendings") showPendings();
+                else if (tab === "c04-tab-logs") showLogs();
+                else if (tab === "c04-tab-diagnostics") showDiagnosticsTab();
+            }
+        };
         document.querySelectorAll(".c04-tab").forEach(button => { button.onclick = () => {
-            document.querySelectorAll(".c04-tab,.c04-tab-panel").forEach(item => item.classList.remove("active"));
-            button.classList.add("active"); document.getElementById(button.dataset.tab).classList.add("active");
+            const tabId = button.dataset.tab;
+            if (tabId === "c04-tab-pendings") {
+                showPendings();
+            } else if (tabId === "c04-tab-logs") {
+                showLogs();
+            } else if (tabId === "c04-tab-diagnostics") {
+                showDiagnosticsTab();
+            } else {
+                document.querySelectorAll(".c04-tab,.c04-tab-panel").forEach(item => item.classList.remove("active"));
+                button.classList.add("active");
+                const panel = document.getElementById(tabId);
+                if (panel) panel.classList.add("active");
+            }
         }; });
         document.querySelectorAll(".c04-modal-close").forEach(button => { button.onclick = () => button.closest(".c04-modal").classList.remove("open"); });
         
@@ -879,10 +1882,10 @@
         
         keydownHandler = event => {
             if (event.key !== "Escape") return;
-            const openModal = document.querySelector(".c04-modal.open");
-            if (openModal) {
+            const openModals = Array.from(document.querySelectorAll(".c04-modal.open"));
+            if (openModals.length > 0) {
                 event.preventDefault(); event.stopImmediatePropagation();
-                openModal.classList.remove("open");
+                openModals[openModals.length - 1].classList.remove("open");
                 return;
             }
             const info = root.C04GeoMap.selectionInfo();
@@ -900,16 +1903,37 @@
             };
         });
 
-        document.getElementById("c04-test-connection").onclick = () => diagnostic("healthCheck");
-        document.getElementById("c04-test-map").onclick = () => showDiagnostic("Mapa e APIs", root.C04GeoMap.diagnostics());
-        document.getElementById("c04-test-general").onclick = generalDiagnostic;
-        document.getElementById("c04-test-write").onclick = () => diagnostic("testWrite");
-        document.getElementById("c04-test-collection").onclick = preflight;
-        const preview = document.getElementById("c04-migration-preview"); if (preview) preview.onclick = async () => {
-            document.getElementById("c04-diagnostic-result").textContent = JSON.stringify(await root.C04GeoSheets.migrationPreview());
+        const pendingRetryFailed = document.getElementById("c04-pending-retry-failed");
+        if (pendingRetryFailed) pendingRetryFailed.onclick = retryFailedGeocodes;
+        
+        const pendingFullScan = document.getElementById("c04-pending-full-scan");
+        if (pendingFullScan) pendingFullScan.onclick = requestFullScan;
+
+        document.getElementById("c04-run-general-diagnostic").onclick = generalDiagnostic;
+        document.getElementById("c04-save-log-retention").onclick = saveRetentionSetting;
+        document.getElementById("c04-prune-logs-now").onclick = pruneLogsNow;
+        document.getElementById("c04-clear-all-logs").onclick = clearAllLogs;
+        document.getElementById("c04-create-manual-backup").onclick = createManualBackup;
+        document.getElementById("c04-test-map").onclick = async () => {
+            const node = document.getElementById("c04-diagnostic-result");
+            if (node) node.innerHTML = "<p>Testando mapas e APIs...</p>";
+            try {
+                const mapDiag = root.C04GeoMap.diagnostics();
+                let geocodeDiag = { ok: false, error: "Mapa nao carregado" };
+                if (mapDiag.loaded) {
+                    geocodeDiag = await root.C04GeoMap.diagnosticGeocode();
+                }
+                showDiagnostic("Mapa e APIs", { map: mapDiag, geocode: geocodeDiag, ok: mapDiag.ok && geocodeDiag.ok });
+            } catch (err) {
+                showDiagnostic("Mapa e APIs", { ok: false, error: err.message });
+            }
         };
+
         const reset = document.getElementById("c04-reset-database"); if (reset) reset.onclick = async () => {
             document.getElementById("c04-reset-confirm").value = ""; document.getElementById("c04-run-reset").disabled = true;
+            document.querySelectorAll(".c04-clean-db-opt").forEach(cb => {
+                cb.checked = !["c04_logs", "c04_backups"].includes(cb.value);
+            });
             document.getElementById("c04-reset-modal").classList.add("open");
         };
         document.getElementById("c04-reset-confirm").oninput = event => {
@@ -917,9 +1941,28 @@
         };
         document.getElementById("c04-run-reset").onclick = async () => {
             const confirmation = document.getElementById("c04-reset-confirm").value; if (confirmation !== "LIMPAR BANCO GEO") return;
+            const checkedBoxes = document.querySelectorAll(".c04-clean-db-opt:checked");
+            const tables = Array.from(checkedBoxes).map(cb => cb.value);
+            if (tables.length === 0) {
+                alert("Selecione ao menos um item para limpar.");
+                return;
+            }
+            
             document.getElementById("c04-run-reset").disabled = true;
-            const result = await root.C04GeoSheets.resetDatabase({ confirmation });
-            document.getElementById("c04-reset-modal").classList.remove("open"); showDiagnostic("Limpeza do banco GEO", Object.assign({ ok: true }, result));
+            try {
+                const result = await root.C04GeoSheets.resetDatabase({ confirmation, tables });
+                document.getElementById("c04-reset-modal").classList.remove("open");
+                showDiagnostic("Limpeza do banco GEO", Object.assign({ ok: true }, result));
+                if (customers.length && tables.some(t => ["c04_customers", "c04_geocodes", "c04_daily_sales"].includes(t))) {
+                    run(false);
+                } else {
+                    generalDiagnostic();
+                }
+            } catch (err) {
+                document.getElementById("c04-run-reset").disabled = false;
+                document.getElementById("c04-reset-modal").classList.remove("open");
+                showDiagnostic("Limpeza do banco GEO", { ok: false, error: err.message });
+            }
         };
         document.getElementById("c04-full-confirm").oninput = event => {
             document.getElementById("c04-run-full").disabled = event.target.value !== "VARREDURA";
@@ -1075,6 +2118,8 @@
             const el = document.getElementById(id);
             if (el) el.value = "";
         });
+        
+        saveSidebarPreferences();
     }
     function saveSidebarPreferences() {
         const prefs = {
@@ -1174,12 +2219,22 @@
             } catch (error) { console.warn("[C04 GEO] Configuracoes remotas indisponiveis:", error.message); }
         }
 
-        const c = root.C04GeoConfig, period = root.C04GeoCore.defaultPeriod(new Date(), c.defaultMonths);
+        const today = new Date();
+        const getLocalDateStr = (d) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dayStr}`;
+        };
+        const todayStr = getLocalDateStr(today);
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const c = root.C04GeoConfig, period = root.C04GeoCore.defaultPeriod(yesterday, 4);
         loading.remove(); const panel = document.createElement("section"); panel.id = "c04-geo-panel"; panel.innerHTML = `
         <header id="c04-geo-head">
             <h3>Inteligencia Geografica</h3>
-            <label class="c04-geo-field">Inicio <input id="c04-start" type="date" value="${period.start}"></label>
-            <label class="c04-geo-field">Fim <input id="c04-end" type="date" value="${period.end}"></label>
+            <label class="c04-geo-field">Inicio <input id="c04-start" type="date" value="${period.start}" min="2025-02-01" max="${todayStr}"></label>
+            <label class="c04-geo-field">Fim <input id="c04-end" type="date" value="${period.end}" min="2025-02-01" max="${todayStr}"></label>
             <button class="c04-btn c04-sync" id="c04-sync">Sincronizar</button>
             <button class="c04-btn alt" id="c04-settings">Configuracoes</button>
             <button class="c04-btn alt c04-icon-btn" id="c04-fullscreen" title="Tela cheia" style="display: none;">[]</button>
@@ -1264,7 +2319,7 @@
                 </div>
             </section>
         </main>
-        ${modal("c04-settings-modal","Configuracoes",`<div class="c04-tabs"><button class="c04-btn c04-tab active" data-tab="c04-tab-personal">Personalizacao<!-- Restaurar padroes desta aba --><!-- Restaurar todos os padroes --></button><button class="c04-btn c04-tab" data-tab="c04-tab-diagnostics">Diagnosticos<!-- Diagnostico geral --></button><button class="c04-btn c04-tab" data-tab="c04-tab-pendings">Pendencias</button><button class="c04-btn c04-tab" data-tab="c04-tab-history">Historico</button><button class="c04-btn c04-tab" data-tab="c04-tab-advanced">Avancado</button></div>
+        ${modal("c04-settings-modal","Configuracoes",`<div class="c04-tabs"><button class="c04-btn c04-tab active" data-tab="c04-tab-personal">Personalização</button><button class="c04-btn c04-tab" data-tab="c04-tab-pendings">Pendências</button><button class="c04-btn c04-tab" data-tab="c04-tab-logs">Logs</button><button class="c04-btn c04-tab" data-tab="c04-tab-diagnostics">Diagnósticos</button></div>
         <div class="c04-tab-panel active" id="c04-tab-personal">
             <div class="c04-section">
                 <h4>Score e recorrencia</h4>
@@ -1394,58 +2449,223 @@
             <button class="c04-btn alt" id="c04-restore-tab">Restaurar padroes desta aba</button>
             <button class="c04-btn alt" id="c04-restore-all">Restaurar todos os padroes</button>
         </div>
-        <div class="c04-tab-panel" id="c04-tab-diagnostics"><button class="c04-btn" id="c04-test-general">Diagnostico geral</button> <button class="c04-btn alt" id="c04-test-connection">Planilha e Apps Script</button> <button class="c04-btn alt" id="c04-test-write">Testar escrita</button> <button class="c04-btn alt" id="c04-test-map">Mapa e APIs</button> <button class="c04-btn alt" id="c04-test-collection">Coleta sem escrita</button><div id="c04-diagnostic-result"></div></div>
-        <div class="c04-tab-panel" id="c04-tab-pendings"><p>Use o botao abaixo para analisar e tratar pendencias sem alterar o Clube04.</p><button class="c04-btn alt" id="c04-pendings">Abrir central de pendencias</button></div>
-        <div class="c04-tab-panel" id="c04-tab-history"><button class="c04-btn alt" id="c04-logs">Abrir historico e logs</button></div>
-        <div class="c04-tab-panel" id="c04-tab-advanced">${root.C04GeoCore.canRunFullScan(visibleUser()) ? `<button class="c04-btn danger" id="c04-full">Varredura completa</button> <button class="c04-btn alt" id="c04-migration-preview">Previa da reconstrucao</button> <button class="c04-btn danger" id="c04-reset-database">Limpar banco GEO</button>` : "<p>Opcoes avancadas restritas.</p>"}</div>`)}
-        ${modal("c04-list-modal","Clientes selecionados",`<table class="c04-table"><thead><tr><th>Cliente</th><th>Bairro</th><th>Visitas</th><th>Ticket</th><th>Gasto</th><th>Score</th></tr></thead><tbody id="c04-list-body"></tbody></table>`)}
-        ${modal("c04-log-modal","Historico e logs",`<h4>Execucoes</h4><table class="c04-table"><thead><tr><th>Inicio</th><th>Tipo</th><th>Status</th><th>Periodo</th></tr></thead><tbody id="c04-log-body"></tbody></table><h4>Pendencias detalhadas</h4><table class="c04-table"><thead><tr><th>Data</th><th>Fonte</th><th>Motivo</th><th>Mensagem</th></tr></thead><tbody id="c04-log-detail-body"></tbody></table>`)}
-        ${modal("c04-pending-modal","Central de pendencias",`
+        <div class="c04-tab-panel" id="c04-tab-pendings">
             <p style="margin-top: 0; margin-bottom: 16px; color: #94a3b8; font-size: 13px;">As correções afetam somente as visualizações e filtros do módulo GEO.</p>
             <div class="c04-pending-filters">
                 <label>Status
                     <select id="c04-pending-status">
-                        <option value="">Todos</option>
-                        <option value="open">Abertas</option>
+                        <option value="open" selected>Abertas</option>
                         <option value="resolved">Resolvidas</option>
                         <option value="ignored">Ignoradas</option>
+                        <option value="">Todos</option>
                     </select>
                 </label>
-                <label>Fonte<input id="c04-pending-source" placeholder="Filtrar por fonte..."></label>
-                <label>Motivo<input id="c04-pending-reason" placeholder="Filtrar por motivo..."></label>
+                <div style="margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <span style="font-size: 12px; color: #94a3b8; margin-right: 8px;" id="c04-pending-selected-count">Selecionados: 0</span>
+                    <button class="c04-btn alt" id="c04-pending-bulk-open" style="height: 34px; padding: 6px 12px; font-size: 13px;">Cadastro</button>
+                    <button class="c04-btn alt" id="c04-pending-bulk-resolve" style="height: 34px; padding: 6px 12px; font-size: 13px;">Tratar</button>
+                    <button class="c04-btn alt" id="c04-pending-reescan" style="height: 34px; padding: 6px 12px; font-size: 13px; background: #ea580c; border-color: #ea580c; color: #fff;">Reescan</button>
+                </div>
             </div>
-            <div style="overflow-x: auto;">
+            <div style="overflow-x: auto; max-height: 450px;">
                 <table class="c04-table">
                     <thead>
                         <tr>
-                            <th style="white-space: nowrap;">Data</th>
-                            <th>Status</th>
-                            <th>Fonte</th>
-                            <th>Motivo</th>
-                            <th>Cliente</th>
+                            <th style="width: 40px; text-align: center;"><input type="checkbox" id="c04-pending-select-all"></th>
+                            <th class="c04-sortable" data-col="data" style="cursor: pointer; white-space: nowrap; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Data <span class="c04-sort-indicator">▼</span>
+                                    <span class="c04-filter-trigger" data-col="data" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
+                            <th class="c04-sortable" data-col="gravidade" style="cursor: pointer; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Gravidade <span class="c04-sort-indicator"></span>
+                                    <span class="c04-filter-trigger" data-col="gravidade" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
+                            <th class="c04-sortable" data-col="pin" style="cursor: pointer; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Pin Gerado <span class="c04-sort-indicator"></span>
+                                    <span class="c04-filter-trigger" data-col="pin" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
+                            <th class="c04-sortable" data-col="fonte" style="cursor: pointer; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Fonte <span class="c04-sort-indicator"></span>
+                                    <span class="c04-filter-trigger" data-col="fonte" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
+                            <th class="c04-sortable" data-col="motivo" style="cursor: pointer; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Motivo <span class="c04-sort-indicator"></span>
+                                    <span class="c04-filter-trigger" data-col="motivo" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
+                            <th class="c04-sortable" data-col="cliente" style="cursor: pointer; user-select: none;">
+                                <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                    Cliente <span class="c04-sort-indicator"></span>
+                                    <span class="c04-filter-trigger" data-col="cliente" style="cursor: pointer; color: #64748b; font-size: 11px; margin-left: 2px;" title="Filtrar">🔍</span>
+                                </div>
+                            </th>
                             <th>Solução Recomendada</th>
                             <th>Avançado</th>
-                            <th style="text-align: right;">Ações</th>
                         </tr>
                     </thead>
                     <tbody id="c04-pending-body"></tbody>
                 </table>
             </div>
-        `)}
-        ${modal("c04-tech-modal","Detalhes Técnicos da Decisão",`
-            <div id="c04-tech-content" style="font-family: monospace; white-space: pre-wrap; font-size: 12px; background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); max-height: 400px; overflow-y: auto; color: #cbd5e1; line-height: 1.6;"></div>
-        `)}
+        </div>
+        <div class="c04-tab-panel" id="c04-tab-logs">
+            <div style="max-height: 250px; overflow-y: auto; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px;">
+                <h4 style="margin-top: 0; color: #fb923c;">Execuções</h4>
+                <table class="c04-table">
+                    <thead>
+                        <tr>
+                            <th>Inicio</th>
+                            <th>Tipo</th>
+                            <th>Status</th>
+                            <th>Usuário</th>
+                            <th>Erro</th>
+                            <th style="text-align: right;">Acoes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="c04-log-body"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="c04-tab-panel" id="c04-tab-diagnostics">
+            <!-- Seção 1: Diagnóstico Geral do Supabase -->
+            <div class="c04-section" style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                <h4 style="margin-top: 0; color: #fb923c; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    📡 Diagnósticos do Supabase 
+                    <span class="c04-info" style="cursor: pointer;" title="Executa todos os testes de conexão, integridade de tabelas, escrita e coleta dados de armazenamento físico do Supabase de forma integrada.">ⓘ</span>
+                </h4>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                    <button class="c04-btn" id="c04-run-general-diagnostic" style="background: #ea580c; border-color: #ea580c;">Rodar Diagnóstico Geral</button>
+                    <button class="c04-btn danger" id="c04-reset-database">Limpar banco GEO</button>
+                    <span class="c04-info" style="cursor: pointer;" title="Abre as opções avançadas de limpeza do banco GEO, permitindo selecionar individualmente quais tabelas expurgar.">ⓘ</span>
+                </div>
+                <div id="c04-diagnostic-result" style="margin-top: 12px;"></div>
+            </div>
+
+            <!-- Seção 2: Manutenção e Rotação de Logs -->
+            <div class="c04-section" style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                <h4 style="margin-top: 0; color: #fb923c; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    🕒 Manutenção & Rotação de Logs
+                    <span class="c04-info" style="cursor: pointer;" title="Configuração da retenção do log rotativo para evitar saturação do limite gratuito (500MB).">ⓘ</span>
+                </h4>
+                <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1;">
+                        Manter logs por (meses):
+                        <input id="c04-log-retention-input" type="number" min="1" max="60" value="12" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #fff; padding: 4px 8px; width: 60px; outline: none;">
+                    </label>
+                    <button class="c04-btn alt" id="c04-save-log-retention" style="height: 32px; padding: 4px 12px; font-size: 12px;">Salvar Regra</button>
+                    <button class="c04-btn alt danger" id="c04-prune-logs-now" style="height: 32px; padding: 4px 12px; font-size: 12px; margin-left: auto;">Limpar Logs Antigos</button>
+                    <button class="c04-btn danger" id="c04-clear-all-logs" style="height: 32px; padding: 4px 12px; font-size: 12px;">Limpar Todos os Logs</button>
+                </div>
+            </div>
+
+            <!-- Seção 3: Backups de Segurança -->
+            <div class="c04-section" style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                <h4 style="margin-top: 0; color: #fb923c; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    💾 Backups de Segurança
+                    <span class="c04-info" style="cursor: pointer;" title="Backups lógicos completos guardados no banco. O auto-backup diário roda silenciosamente uma vez ao dia no primeiro login do usuário.">ⓘ</span>
+                </h4>
+                <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                    <button class="c04-btn alt" id="c04-create-manual-backup" style="height: 32px; padding: 4px 12px; font-size: 12px;">Criar Backup Manual</button>
+                </div>
+                <div style="max-height: 200px; overflow-y: auto;">
+                    <table class="c04-table" style="margin-top: 0;">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>Tamanho</th>
+                                <th>Usuário</th>
+                                <th style="text-align: right;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="c04-backup-list-body">
+                            <tr><td colspan="4" style="text-align: center; color: #64748b; padding: 12px;">Carregando backups...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Seção 4: Diagnósticos do Google Maps & APIs -->
+            <div class="c04-section" style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                <h4 style="margin-top: 0; color: #fb923c; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    🗺️ APIs e Mapas do Google
+                    <span class="c04-info" style="cursor: pointer;" title="Checa o carregamento do script do Google Maps, cota de API de Geocodificação e saúde da renderização visual.">ⓘ</span>
+                </h4>
+                <div>
+                    <button class="c04-btn alt" id="c04-test-map" style="height: 32px; padding: 4px 12px; font-size: 12px;">Testar Conexão com Google Maps & APIs</button>
+                </div>
+            </div>
+        </div>`)}
+        ${modal("c04-list-modal","Clientes selecionados",`<table class="c04-table"><thead><tr><th>Cliente</th><th>Bairro</th><th>Visitas</th><th>Ticket</th><th>Gasto</th><th>Score</th></tr></thead><tbody id="c04-list-body"></tbody></table>`)}
+        ${modal("c04-telemetry-modal","Detalhamento de Performance (Telemetria)",`<div id="c04-telemetry-content" style="font-family: monospace; white-space: pre-wrap; font-size: 13px; background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; line-height: 1.6;"></div>`)}
+        ${modal("c04-tech-modal","Detalhes Técnicos da Decisão",`<div id="c04-tech-content" style="font-family: monospace; white-space: pre-wrap; font-size: 12px; background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); max-height: 400px; overflow-y: auto; color: #cbd5e1; line-height: 1.6;"></div>`)}
         ${modal("c04-full-modal","Confirmar varredura completa",`<p class="c04-error"><b>Esta operacao pode consumir cota da Geocoding API.</b></p><p id="c04-full-estimate"></p><label>Digite VARREDURA para confirmar <input id="c04-full-confirm"></label><div class="c04-actions"><button class="c04-btn danger c04-sync" id="c04-run-full" disabled>Executar varredura completa</button></div>`)}
-        ${modal("c04-reset-modal","Confirmar limpeza do banco GEO",`<p class="c04-error"><b>Esta operacao remove somente os dados controlados pelo modulo GEO.</b></p><label>Digite LIMPAR BANCO GEO para confirmar <input id="c04-reset-confirm"></label><div class="c04-actions"><button class="c04-btn danger" id="c04-run-reset" disabled>Limpar banco GEO</button></div>`)}
+        ${modal("c04-reset-modal","Confirmar limpeza do banco GEO",`
+            <p class="c04-error"><b>Esta operação remove os dados selecionados do módulo GEO.</b></p>
+            
+            <div style="background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 16px; font-size: 12px; text-align: left;">
+                <h5 style="margin: 0 0 8px; color: #fb923c; font-size: 13px;">Selecione o que deseja limpar:</h5>
+                
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="c04-clean-db-opt" value="c04_customers" checked> Clientes Consolidados (c04_customers)</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="c04-clean-db-opt" value="c04_geocodes" checked> Cache de Geocodificação (c04_geocodes)</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="c04-clean-db-opt" value="c04_daily_sales" checked> Cache Diário de Vendas (c04_daily_sales)</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="c04-clean-db-opt" value="c04_synced_days" checked> Dias Sincronizados (c04_synced_days)</label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="c04-clean-db-opt" value="c04_pendings" checked> Central de Pendências (c04_pendings)</label>
+                    
+                    <div style="border-top: 1px dashed rgba(255,255,255,0.1); margin: 6px 0; padding-top: 6px;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color: #ef4444;"><input type="checkbox" class="c04-clean-db-opt" value="c04_logs"> Logs de Execução e Telemetria (c04_logs)</label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color: #ef4444;"><input type="checkbox" class="c04-clean-db-opt" value="c04_backups"> Backups de Segurança (c04_backups)</label>
+                    </div>
+                </div>
+            </div>
+            
+            <label style="font-size:13px;display:block;margin-bottom:12px;text-align:left;">
+                Digite <b>LIMPAR BANCO GEO</b> para confirmar:
+                <input id="c04-reset-confirm" style="width:100%;margin-top:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;padding:6px;outline:none;">
+            </label>
+            
+            <div class="c04-actions">
+                <button class="c04-btn danger" id="c04-run-reset" disabled>Executar Limpeza Selecionada</button>
+            </div>
+        `)}
         `; document.body.appendChild(panel); loadSidebarPreferences(); bind();
-        try { await root.C04GeoMap.init(document.getElementById("c04-geo-map")); progress({ stage: root.C04GeoSheets.configured() ? "Pronto" : "Configure Apps Script no Tampermonkey", percent: 0 }); }
+        try {
+            await root.C04GeoMap.init(document.getElementById("c04-geo-map"));
+            progress({ stage: root.C04GeoSheets.configured() ? "Pronto" : "Configure o Supabase no c04-geo-config.js", percent: 0 });
+            if (root.C04GeoSheets.configured()) {
+                autoBackupCheck().catch(err => console.warn("[C04 GEO] Falha no auto-backup check:", err));
+                if (root.C04GeoData) {
+                    root.C04GeoData.collectCustomersCsv({ cancelled: false }).catch(err => {
+                        console.warn("[C04 GEO] Background CSV prefetch failed:", err);
+                    });
+                }
+            }
+        }
         catch (error) { progress({ stage: `Erro no mapa: ${error.message}`, percent: 0 }); }
     }
     function destroy() {
         if (keydownHandler) document.removeEventListener("keydown", keydownHandler, true);
         if (fullscreenHandler) document.removeEventListener("fullscreenchange", fullscreenHandler);
         keydownHandler = null; fullscreenHandler = null;
+        if (closeDropdownOnOutsideClick) {
+            document.removeEventListener("click", closeDropdownOnOutsideClick);
+            closeDropdownOnOutsideClick = null;
+        }
+        const dropdown = document.getElementById("c04-pending-filter-dropdown");
+        if (dropdown) dropdown.remove();
         const panel = document.getElementById("c04-geo-panel"); if (panel) panel.remove(); if (root.C04GeoMap) root.C04GeoMap.destroy();
+        if (root.C04GeoData) {
+            root.C04GeoData._csvCache = null;
+            root.C04GeoData._csvCachePromise = null;
+        }
     }
     root.addEventListener("c04_open_geolocalizacao", open); root.addEventListener("c04_global_teardown", destroy);
 })(window);
@@ -1455,3 +2675,4 @@
 // "Camadas de contexto"
 // "Restaurar padroes desta aba"
 // "Restaurar todos os padroes"
+// "Diagnostico geral"

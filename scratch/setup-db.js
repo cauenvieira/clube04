@@ -13,54 +13,52 @@ create table if not exists c04_settings (
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 2. Clientes
-create table if not exists c04_customers (
-    id_pessoa text primary key,
-    name text not null,
-    document text,
-    phone text,
-    status text,
-    units text,
-    country text,
-    state text,
-    city text,
-    zip text,
-    street text,
-    number text,
-    complement text,
-    neighborhood text,
-    address text,
-    address_hash text,
-    hash text,
-    pets text,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+-- Drop tables to rewrite them
+drop table if exists c04_daily_sales cascade;
+drop table if exists c04_customers cascade;
+drop table if exists c04_geocodes cascade;
+drop table if exists c04_pendings cascade;
+drop table if exists c04_logs cascade;
+drop table if exists c04_synced_days cascade;
+
+-- 2. Geocodificação (Cache/Localização) - Tabela Pai de Endereços
+create table c04_geocodes (
+    id_localizacao serial primary key,
+    cep text not null,
+    numero text,
+    longitude double precision not null,
+    latitude double precision not null,
+    rua text,
+    bairro text,
+    cidade text,
+    estado text,
+    pais text,
+    run_id text,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    constraint c04_geocodes_cep_numero_key unique (cep, numero)
 );
 
--- 3. Geocodificação (Cache)
-create table if not exists c04_geocodes (
-    id_pessoa text primary key references c04_customers(id_pessoa) on delete cascade,
-    address_hash text not null,
-    lat double precision not null,
-    lng double precision not null,
-    formatted_address text,
-    status text not null,
-    reason text,
-    distance_km double precision,
+-- 3. Clientes
+create table c04_customers (
+    id_cliente text primary key,
+    status text,
+    nome text not null,
+    telefone text,
+    cpf text,
+    doguinhos text,
+    id_localizacao integer references c04_geocodes(id_localizacao) on delete set null,
+    run_id text,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
 -- 4. Cache Diário de Vendas
-create table if not exists c04_daily_sales (
-    id_pessoa text not null references c04_customers(id_pessoa) on delete cascade,
-    sale_date date not null,
-    visits integer not null default 0,
-    spend double precision not null default 0.0,
-    ticket double precision not null default 0.0,
-    frequency text,
-    last_purchase text,
-    products jsonb not null default '[]'::jsonb,
+create table c04_daily_sales (
+    id_cliente text not null references c04_customers(id_cliente) on delete cascade,
+    data date not null,
+    total_gasto double precision not null default 0.0,
+    run_id text,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    primary key (id_pessoa, sale_date)
+    primary key (id_cliente, data)
 );
 
 -- 5. Dias Sincronizados
@@ -78,6 +76,7 @@ create table if not exists c04_pendings (
     customer_name text,
     message text,
     status text not null default 'open',
+    run_id text,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     resolved_at timestamp with time zone,
     resolved_by text,
@@ -106,6 +105,57 @@ create table if not exists c04_logs (
     telemetry jsonb,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- 8. Backups de Segurança
+create table if not exists c04_backups (
+    backup_id text primary key,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    size_bytes integer not null,
+    data jsonb not null,
+    visible_user text,
+    status text not null
+);
+
+-- RPC Function to get DB and table sizes
+create or replace function c04_get_db_size()
+returns jsonb
+language plpgsql
+security definer
+as $$
+declare
+    total_size bigint;
+    table_sizes jsonb;
+    log_size bigint;
+    log_count bigint;
+    backup_size bigint;
+    backup_count bigint;
+begin
+    total_size := pg_database_size(current_database());
+    
+    select jsonb_object_agg(relname, pg_total_relation_size(oid))
+    into table_sizes
+    from pg_class
+    where relname in ('c04_settings', 'c04_customers', 'c04_geocodes', 'c04_daily_sales', 'c04_synced_days', 'c04_pendings', 'c04_logs', 'c04_backups')
+      and relnamespace = 'public'::regnamespace;
+
+    select count(*), coalesce(sum(pg_column_size(c04_logs)), 0)
+    into log_count, log_size
+    from c04_logs;
+
+    select count(*), coalesce(sum(pg_column_size(c04_backups)), 0)
+    into backup_count, backup_size
+    from c04_backups;
+
+    return jsonb_build_object(
+        'database_size_bytes', total_size,
+        'table_sizes', coalesce(table_sizes, '{}'::jsonb),
+        'log_count', log_count,
+        'log_size_bytes', log_size,
+        'backup_count', backup_count,
+        'backup_size_bytes', backup_size
+    );
+end;
+$$;
 `;
 
 async function main() {
