@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Clube04 • Suite
 // @namespace    https://clube04.com.br/
-// @version      11.0.0
-// @description  Carregador híbrido do Clube04 Suite com suporte local (dev mode) e produção.
+// @version      12.0.0
+// @description  Loader do Clube04 Suite em produção.
 // @author       Cauê Neves Vieira
 // @match        https://clube04.com.br/digital/*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader.user.js
-// @downloadURL  https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader.user.js
+// @updateURL    https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js
+// @downloadURL  https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js
 // ==/UserScript==
 (function () {
     "use strict";
