@@ -55,6 +55,59 @@ test("map loader rejects a partial Google Maps namespace", () => {
     assert.match(source, /waitUntil\(ready, src\)/);
 });
 
+test("renderPins ignores invalid coordinates before creating Google markers", () => {
+    const createdPositions = [];
+    class AdvancedMarkerElement {
+        constructor(options) {
+            const position = options.position;
+            assert.equal(Number.isFinite(position.lat), true);
+            assert.equal(Number.isFinite(position.lng), true);
+            if (options.title !== "Clube04") createdPositions.push(position);
+            this.map = null;
+        }
+        addListener() { return { remove() {} }; }
+    }
+    class MarkerClusterer {
+        clearMarkers() {}
+        setMap() {}
+    }
+    const element = () => ({ style: {}, appendChild() {}, textContent: "" });
+    const config = {
+        colors: { clientPin: "#000", scoreHigh: "#000", scoreGood: "#000", scoreMedium: "#000", scoreLow: "#000" },
+        center: { lat: -23.5162, lng: -46.1961 },
+        clusterRadius: 60
+    };
+    const context = {
+        window: { C04GeoCore: core, C04GeoConfig: config },
+        document: { createElement: element },
+        google: { maps: { InfoWindow: class {}, marker: { AdvancedMarkerElement } } },
+        markerClusterer: { MarkerClusterer },
+        console,
+        setTimeout,
+        clearTimeout
+    };
+    Object.assign(context.window, { google: context.google, markerClusterer: context.markerClusterer });
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8"), context);
+
+    const base = { idPessoa: "1", name: "Cliente", score: 50, visits: 1, spend: 10, ticket: 10 };
+    const inputs = [
+        { ...base, lat: null, lng: -46.19 },
+        { ...base, lat: undefined, lng: -46.19 },
+        { ...base, lat: Number.NaN, lng: -46.19 },
+        { ...base, lat: "invalida", lng: -46.19 },
+        { ...base, lat: 91, lng: -46.19 },
+        { ...base, lat: -23.52, lng: null },
+        { ...base, lat: -23.52, lng: 181 },
+        { ...base, lat: -23.52, lng: -46.19 }
+    ];
+
+    assert.doesNotThrow(() => context.window.C04GeoMap.renderPins(inputs, true, true));
+    assert.equal(createdPositions.length, 1);
+    assert.equal(createdPositions[0].lat, -23.52);
+    assert.equal(createdPositions[0].lng, -46.19);
+});
+
 function customResult(LatLng, partial, zip, country = "Brasil", state = "SP", city = "Mogi das Cruzes", route = "Rua Santana") {
     return { partial_match: partial, geometry: { location: new LatLng(-23.52, -46.19) }, address_components: [
         { long_name: country, short_name: country === "Brasil" ? "BR" : country, types: ["country"] },

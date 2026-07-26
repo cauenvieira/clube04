@@ -259,10 +259,18 @@
             markers.forEach(marker => { marker.map = map; });
         }
     }
+    function normalizeMapCustomer(customer) {
+        if (!customer || customer.lat == null || customer.lng == null) return null;
+        if ((typeof customer.lat === "string" && !customer.lat.trim()) ||
+            (typeof customer.lng === "string" && !customer.lng.trim())) return null;
+        const lat = Number(customer.lat), lng = Number(customer.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+        return Object.assign({}, customer, { lat, lng });
+    }
     function renderPins(items, visible, clusterEnabled) {
+        const validItems = (items || []).map(normalizeMapCustomer).filter(Boolean);
         const seen = {};
-        const jitteredItems = items.map(customer => {
-            if (!Number.isFinite(customer.lat) || !Number.isFinite(customer.lng)) return customer;
+        const jitteredItems = validItems.map(customer => {
             const key = `${customer.lat.toFixed(6)},${customer.lng.toFixed(6)}`;
             if (seen[key] == null) {
                 seen[key] = 0;

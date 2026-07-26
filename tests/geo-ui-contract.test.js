@@ -57,3 +57,11 @@ test("map does not force progress outside short viewports", () => {
     assert.match(source, /panel\.dataset\.progressClosed/);
     assert.match(source, /Fullscreen indisponivel/);
 });
+
+test("map rendering validates both coordinates and avoids duplicate rendering after sync", () => {
+    const mapSource = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geo-map.js"), "utf8");
+    const uiSource = fs.readFileSync(path.join(__dirname, "..", "modules", "geo", "c04-geolocalizacao.js"), "utf8");
+    assert.match(mapSource, /lat < -90 \|\| lat > 90 \|\| lng < -180 \|\| lng > 180/);
+    assert.match(uiSource, /visibleCustomers\.filter\(hasValidMapPosition\)/);
+    assert.doesNotMatch(uiSource, /progress\(\{ stage: "Renderizando mapa", percent: 80 \}\);\s*root\.C04GeoMap\.renderPins\(customers/);
+});

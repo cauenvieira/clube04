@@ -292,16 +292,20 @@
         return { frequency: range("c04-frequency"), ticket: range("c04-ticket-filter"), score: range("c04-score-filter"),
             excludeSingleVisit: document.getElementById("c04-exclude-single").checked };
     }
+    function hasValidMapPosition(item) {
+        return Boolean(item) && Number.isFinite(item.lat) && Number.isFinite(item.lng) &&
+            item.lat >= -90 && item.lat <= 90 && item.lng >= -180 && item.lng <= 180;
+    }
     function render() {
         score(); visibleCustomers = root.C04GeoCore.filterCustomers(customers, filters());
-        const mapped = visibleCustomers.filter(item => Number.isFinite(item.lat));
+        const mapped = visibleCustomers.filter(hasValidMapPosition);
         root.C04GeoMap.renderPins(mapped, layerState().pins, layerState().cluster); root.C04GeoMap.setLayers(layerState());
         updateMergedSummary();
     }
     function updateMergedSummary() {
         const node = document.getElementById("c04-general-summary");
         if (!node) return;
-        const mapped = visibleCustomers.filter(item => Number.isFinite(item.lat));
+        const mapped = visibleCustomers.filter(hasValidMapPosition);
         const startVal = document.getElementById("c04-start")?.value;
         const endVal = document.getElementById("c04-end")?.value;
         let isPeriodShort = false;
@@ -382,9 +386,6 @@
             customers = root.C04GeoCore.scoreCustomers(result.periodCustomers, root.C04GeoConfig.weights, root.C04GeoConfig.franchiseAverageTicket, root.C04GeoConfig.recurrenceLimits);
             
             progress({ stage: "Renderizando mapa", percent: 80 });
-            root.C04GeoMap.renderPins(customers, layerState().pins, layerState().cluster);
-            root.C04GeoMap.setLayers(layerState());
-            
             render();
             
             progress({ stage: "Finalizando execução", percent: 95 });
