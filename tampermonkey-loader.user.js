@@ -1,19 +1,22 @@
 // ==UserScript==
 // @name         Clube04 • Suite
-// @namespace    https://clube04.com.br/
-// @version      12.0.0
+// @namespace    https://clube04digital.com.br/
+// @version      12.0.1
 // @description  Loader de produção do Clube04 Suite.
 // @author       Cauê Neves Vieira
-// @match        https://clube04.com.br/digital/*
+// @match        https://clube04digital.com.br/*
+// @match        https://clube04.com.br/*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js
-// @downloadURL  https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js
+// @updateURL    https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader.user.js
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  const PROD_URL = "https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/clube04-suite.js";
+  const PROD_URL =
+    "https://cdn.jsdelivr.net/gh/cauenvieira/clube04@main/clube04-suite.js";
+
   const SCRIPT_ID = "c04-suite-loader-prod";
 
   function loadScript(url) {
