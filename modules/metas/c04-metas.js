@@ -8,10 +8,10 @@
 
     // --- Configurações ---
     const RELATORIOS = {
-        CAIXA: { url: "https://clube04.com.br/digital/relatoriocaixa.php", target: "RelatorioCaixaN001.php", btn: ".btn-primary" },
-        PRODUTO: { url: "https://clube04.com.br/digital/relproduto.php", target: "RelatorioProdutoN001.php", btn: "#buttonbuscarRelatorioProduto" },
-        PRODUCAO: { url: "https://clube04.com.br/digital/relproducaovenda.php", target: "RelatorioProducaoVendaN002.php", btn: "#buttonbuscarRelatorioProducaoVenda" },
-        VENDA: { url: "https://clube04.com.br/digital/relvendafechada.php", target: "RelatorioVendaFechadaN001.php", btn: "#buttonbuscarVendaFechada" }
+        CAIXA: { url: "https://clube04digital.com.br/relatoriocaixa.php", target: "RelatorioCaixaN001.php", btn: ".btn-primary" },
+        PRODUTO: { url: "https://clube04digital.com.br/relproduto.php", target: "RelatorioProdutoN001.php", btn: "#buttonbuscarRelatorioProduto" },
+        PRODUCAO: { url: "https://clube04digital.com.br/relproducaovenda.php", target: "RelatorioProducaoVendaN002.php", btn: "#buttonbuscarRelatorioProducaoVenda" },
+        VENDA: { url: "https://clube04digital.com.br/relvendafechada.php", target: "RelatorioVendaFechadaN001.php", btn: "#buttonbuscarVendaFechada" }
     };
 
     const INDICADORES = [

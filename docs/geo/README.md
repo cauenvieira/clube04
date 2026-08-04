@@ -23,7 +23,7 @@ Para que o módulo GEO funcione com todas as suas capacidades, as APIs e configu
     *   `Maps JavaScript API`
     *   `Geocoding API`
 3.  Crie uma credencial de API Key e aplique as seguintes restrições de segurança:
-    *   **Restrição de HTTP (Referenciadores)**: Defina para `https://clube04.com.br/*`.
+    *   **Restrição de HTTP (Referenciadores)**: Defina para `https://clube04digital.com.br/*`.
     *   **Restrição de API**: Limite a chave para usar apenas `Maps JavaScript API` e `Geocoding API`.
 4.  Defina alertas de faturamento e uma cota de segurança diária inicial de **1.000 requisições** para a `Geocoding API`.
 5.  O Map ID JavaScript utilizado pela suite é `4e6ccbfcdcfa97ebec8daf1e` (o estilo de mapa está associado diretamente a ele no painel do Google Cloud e não precisa ser passado via código).

@@ -6,8 +6,8 @@
     "use strict";
 
     const CONFIG = {
-        domain: 'clube04.com.br',
-        urlAlvo: 'https://clube04.com.br/digital/gerenciarponto.php',
+        domain: 'clube04digital.com.br',
+        urlAlvo: 'https://clube04digital.com.br/gerenciarponto.php',
         urlInserir: './GerenciarPonto/GerenciarPontoI001.php',
         urlExcluir: './GerenciarPonto/GerenciarPontoE001.php',
         targetRequest: 'GerenciarPontoN002.php',

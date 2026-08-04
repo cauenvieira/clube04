@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         Clube04 • Suite
 // @namespace    https://clube04digital.com.br/
-// @version      12.0.1
+// @version      12.0.2
 // @description  Loader do Clube04 Suite em produção.
 // @author       Cauê Neves Vieira
 // @match        https://clube04digital.com.br/*
-// @match        https://clube04.com.br/digital/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js
 // @downloadURL  https://raw.githubusercontent.com/cauenvieira/clube04/main/tampermonkey-loader-dev.user.js

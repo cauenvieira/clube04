@@ -70,7 +70,7 @@ const path = require('path');
     
     try {
         console.log("Navegando para a página de login do CRM...");
-        await page.goto('https://clube04.com.br/digital/', { waitUntil: 'networkidle2' });
+        await page.goto('https://clube04digital.com.br/', { waitUntil: 'networkidle2' });
         
         console.log("Inserindo credenciais de login...");
         await page.waitForSelector('#loginPessoaSession');
