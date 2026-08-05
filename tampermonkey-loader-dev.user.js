@@ -2,7 +2,7 @@
 // @name         Clube04 • Suite • DEV
 // @namespace    https://clube04digital.com.br/
 // @version      12.0.2
-// @description  Loader do Clube04 Suite em produção.
+// @description  Loader DEV do Clube04 Suite.
 // @author       Cauê Neves Vieira
 // @match        https://clube04digital.com.br/*
 // @grant        none
